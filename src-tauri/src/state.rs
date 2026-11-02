@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::dsh::DshService;
 use crate::interop::Hwnd;
 use crate::media::MediaService;
 use crate::metrics::IslandMetrics;
@@ -93,6 +94,7 @@ impl Default for Runtime {
 pub struct Shared {
     pub settings: SettingsService,
     pub media: MediaService,
+    pub dsh: DshService,
     pub runtime: Mutex<Runtime>,
     pub hwnd: Mutex<Hwnd>,
     pub shutdown: AtomicBool,
@@ -101,10 +103,11 @@ pub struct Shared {
 pub type SharedState = Arc<Shared>;
 
 impl Shared {
-    pub fn new(settings: SettingsService, media: MediaService) -> Self {
+    pub fn new(settings: SettingsService, media: MediaService, dsh: DshService) -> Self {
         Self {
             settings,
             media,
+            dsh,
             runtime: Mutex::new(Runtime::default()),
             hwnd: Mutex::new(0),
             shutdown: AtomicBool::new(false),
@@ -179,9 +182,13 @@ impl Shared {
 
         let snapshot = self.snapshot();
         let scale = snapshot.scale;
+        let dsh_enabled = self.settings.current().dsh_enabled;
 
         let window_width = (snapshot.metrics.card_width * scale).round().max(1.0) as i32;
-        let window_height = (snapshot.metrics.card_height * scale).round().max(1.0) as i32;
+        // 高度始终预留 dsh 信息行：dsh 出现时只让形状在窗口内生长，不改窗口尺寸
+        let window_height = (snapshot.metrics.window_height(dsh_enabled) * scale)
+            .round()
+            .max(1.0) as i32;
 
         let mut x = (snapshot.anchor.center_x - window_width as f64 / 2.0).round() as i32;
         let mut y = if snapshot.bottom_anchored {
@@ -212,7 +219,8 @@ impl Shared {
     pub fn should_show(&self) -> bool {
         let settings = self.settings.current();
         let user_hidden = self.with_runtime(|runtime| runtime.user_hidden);
-        !user_hidden && (self.media.current().is_some() || settings.persistent)
+        let dsh_active = settings.dsh_enabled && self.dsh.is_active();
+        !user_hidden && (self.media.current().is_some() || dsh_active || settings.persistent)
     }
 
     /// 根据媒体 / 常驻 / 用户显隐决定岛窗是否可见。

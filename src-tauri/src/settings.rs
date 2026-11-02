@@ -46,6 +46,13 @@ pub struct IslandSettings {
     pub auto_collapse_on_pause: bool,
     pub idle_collapse: bool,
     pub idle_collapse_seconds: f64,
+    /// 是否接入 DeepSeek Harness 状态（旧配置缺字段时由 `default_dsh_enabled` 补 true）。
+    #[serde(default = "default_dsh_enabled")]
+    pub dsh_enabled: bool,
+}
+
+fn default_dsh_enabled() -> bool {
+    true
 }
 
 impl Default for IslandSettings {
@@ -67,6 +74,7 @@ impl Default for IslandSettings {
             auto_collapse_on_pause: true,
             idle_collapse: true,
             idle_collapse_seconds: 2.5,
+            dsh_enabled: true,
         }
     }
 }

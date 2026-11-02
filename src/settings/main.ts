@@ -45,7 +45,18 @@ let idleSlider: Slider;
 let persistentSwitch: ToggleSwitch;
 let autoCollapseSwitch: ToggleSwitch;
 let idleCollapseSwitch: ToggleSwitch;
+let dshSwitch: ToggleSwitch;
 let autoStartSwitch: ToggleSwitch;
+
+// 设置窗口同样屏蔽右键菜单，避免弹出 WebView2 的默认上下文菜单
+document.addEventListener(
+  "contextmenu",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  },
+  true,
+);
 
 // ---------------- 预览 / 保存 / 取消 ----------------
 
@@ -207,6 +218,12 @@ function buildControls(settings: IslandSettings): void {
   idleCollapseSwitch.bindOnChange((value) => {
     working.IdleCollapse = value;
     setIdlePanelEnabled(value);
+    void preview();
+  });
+
+  dshSwitch = new ToggleSwitch(document.getElementById("dshSwitch")!, settings.DshEnabled);
+  dshSwitch.bindOnChange((value) => {
+    working.DshEnabled = value;
     void preview();
   });
 

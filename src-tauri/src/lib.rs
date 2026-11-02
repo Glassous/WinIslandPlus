@@ -3,6 +3,7 @@
 //! 启动顺序：日志 → 配置 → 单实例 → 岛窗原生样式 → 落位 → 媒体线程 → 托盘 → 轮询器。
 
 mod commands;
+mod dsh;
 mod interop;
 mod log;
 mod media;
@@ -19,6 +20,7 @@ use std::sync::Arc;
 
 use tauri::Manager;
 
+use crate::dsh::DshService;
 use crate::media::MediaService;
 use crate::settings::SettingsService;
 use crate::state::{Shared, SharedState};
@@ -36,7 +38,8 @@ pub fn run() {
     }
 
     let media = MediaService::new();
-    let shared: SharedState = Arc::new(Shared::new(settings, media.clone()));
+    let dsh = DshService::new();
+    let shared: SharedState = Arc::new(Shared::new(settings, media.clone(), dsh.clone()));
     let setup_state = shared.clone();
 
     tauri::Builder::default()
@@ -67,6 +70,7 @@ pub fn run() {
 
             setup_state.recompute(&handle);
             media.start(handle.clone());
+            dsh.start(handle.clone());
             tray::create(&handle, &setup_state);
             poller::start(handle.clone(), setup_state.clone());
 
@@ -118,6 +122,7 @@ pub fn run() {
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 let state = app.state::<SharedState>();
+                state.dsh.stop();
                 state.stop();
                 state.settings.flush();
                 log::info("app: 已退出");

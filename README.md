@@ -24,6 +24,13 @@
 - **位置锁定**：岛体平时不可拖动（点击即展开 / 收起），只有在设置窗口打开期间才能拖动调整。
 - **位置与尺寸**：顶部居中（默认）、顶部左 / 右、底部居中四种预设 + 自定义拖动落位；
   小 / 中 / 大 / 自定义四档尺寸（自定义只调宽度，高度恒为宽度的一半）。
+- **DeepSeek Harness 适配**：只要 dsh 桌面端 / CLI 在运行就自动接入，胶囊上直接显示
+  当前阶段、会话 token 与官方余额（展开态额外显示模型名与当前工具名）；没有媒体时胶囊
+  只显示 dsh，有媒体时媒体在左、dsh 在右，展开后 dsh 信息行出现在媒体控件下方。
+  阶段来自 dsh 会话事件流的尾部帧（只解最后一个 zstd 帧，不读对话正文），
+  详见 [docs/dsh-status.md](docs/dsh-status.md)；`scripts/dsh-status.ps1` 是可选的
+  状态文件写入器，用于补充会话成本或自定义文案。
+- **右键屏蔽**：胶囊态、展开态与设置窗口都吞掉右键上下文菜单，右键不会弹出任何卡片。
 - **常驻模式**：没有媒体时也显示一个静止的空胶囊，且点击不展开。
 - **托盘菜单**：显示 / 隐藏、位置、尺寸、常驻、开机自启、设置、退出。
 - **设置窗口**：分组的 Fluent 设置界面（自绘 ComboBox / ToggleSwitch / Slider），改动即时预览，
@@ -115,6 +122,7 @@ powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1 -RemoveSettings
 | `AutoCollapseOnPause` | 播放暂停时自动收起 |
 | `IdleCollapse` | 光标离开岛体后是否自动收起 |
 | `IdleCollapseSeconds` | 光标离开多久后自动收起（秒，1–15） |
+| `DshEnabled` | 是否接入 DeepSeek Harness 状态（默认 `true`） |
 
 日志：`%LOCALAPPDATA%\WinIslandPlus\logs\app-yyyyMMdd.log`（只记录异常与状态迁移，不记录媒体内容）。
 
@@ -134,8 +142,10 @@ src-tauri/
   src/window.rs placement.rs       Win32 悬浮窗技巧与落位解算
   src/poller.rs                    光标轮询：点击穿透、自动收起、拖动岛体、置顶心跳
   src/media/                       SMTC 会话、封面解码、取色、LRU 缓存
+  src/dsh/mod.rs                   DeepSeek Harness 状态文件轮询与快照推送
   src/settings.rs startup.rs       配置原子读写、HKCU 自启
   src/tray.rs                      运行时绘制托盘图标 + 原生菜单
+docs/dsh-status.md                 dsh 状态文件契约与接入说明
 scripts/                           开发运行、打包、安装卸载、图标生成、截图与诊断
 release/                           交付产物（安装包与绿色版 exe）
 ```
@@ -152,7 +162,13 @@ release/                           交付产物（安装包与绿色版 exe）
   返回 `MA_NOACTIVATE`。WebView2 在未激活窗口上仍会派发指针事件，所以卡片按钮用标准
   DOM 事件；而进度条拖动、岛外点击收起、拖动岛体统一走 Rust 轮询，不依赖事件可靠性。
 - **窗口尺寸固定**：窗口始终按展开态尺寸创建，展开 / 收起只改变内部岛体的宽高与圆角，
-  不会出现「窗口先放大、内容后跟上」的空白帧。
+  不会出现「窗口先放大、内容后跟上」的空白帧。开启 dsh 集成时窗口高度会额外预留
+  66 DIP 给 dsh 信息块，多出来的区域始终透明并参与形状命中判定穿透。
+- **dsh 尺寸过渡**：胶囊宽度按 dsh 内容自适应（96–132 DIP，先量再写，避免逐帧测量），
+  卡片高度按「是否出现 dsh 信息块」变化；两者都交给同一个 `IslandAnimator` 缓动
+  （宽度 260 ms、高度 280 ms），内容再叠 180 ms 的淡入 + 4 DIP 上移。
+- **dsh 状态时效**：阶段与用量只在会话确实活跃时展示——空闲态只显示阶段与余额，
+  避免把上一个会话的 token 数挂在当前空对话上。
 - **置顶保活**：轮询器每 2 秒检查一次 `WS_EX_TOPMOST`，丢失即重新压顶；同时兜底
   「应该显示却被隐藏」的情况。
 - **取色光晕**：封面在 Rust 侧解码 32×32 后按色相分桶提取主 / 次色；展开卡片背后三团

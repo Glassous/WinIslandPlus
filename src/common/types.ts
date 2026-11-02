@@ -14,6 +14,12 @@ export type PlacementPreset =
 
 export type IslandSizePreset = "Small" | "Medium" | "Large" | "Custom";
 
+/**
+ * DeepSeek Harness 的执行阶段。
+ * 由状态文件写入方给出；未知取值前端按 `idle` 处理。
+ */
+export type DshStage = "idle" | "thinking" | "tool" | "waiting" | "done";
+
 /** 唯一持久化契约。所有值域收敛由 Rust 侧 Normalize 完成。 */
 export interface IslandSettings {
   Placement: PlacementPreset;
@@ -36,6 +42,8 @@ export interface IslandSettings {
   AutoCollapseOnPause: boolean;
   IdleCollapse: boolean;
   IdleCollapseSeconds: number;
+  /** 是否接入 DeepSeek Harness 状态（默认开启）。 */
+  DshEnabled: boolean;
 }
 
 /** 胶囊态 / 展开态的尺寸几何（DIP）。 */
@@ -72,6 +80,39 @@ export interface MediaSnapshot {
   AccentColorAlt: string | null;
 }
 
+/**
+ * DeepSeek Harness 某一时刻的状态快照（不可变）。
+ *
+ * 由 `dsh-status.json` 解析而来：Rust 侧 `src-tauri/src/dsh/mod.rs` 负责
+ * 定位文件、判定活跃、汇总 token 与增量推送，前端只做展示。
+ */
+export interface DshSnapshot {
+  /** 执行阶段。 */
+  Stage: DshStage;
+  /** 展示用短词（写入方给中文）；为空时前端按 Stage 兜底。 */
+  StageLabel: string;
+  Model: string;
+  /** `deepseek-official` / `openrouter` / ... */
+  Provider: string;
+  /** 最近一次工具调用的名字（自动探测给出），展开态展示。 */
+  Tool: string;
+  /** `official` / `web` / `api`：仅 official / web 才显示余额。 */
+  AuthMode: string;
+  SessionId: string;
+  InputTokens: number;
+  OutputTokens: number;
+  CacheReadTokens: number;
+  /** 会话累计 token（input + output + cacheRead）。 */
+  TotalTokens: number;
+  SessionCost: number;
+  Currency: string;
+  /** 账户余额；写入方未提供时为 null（该段整体不占位）。 */
+  Balance: number | null;
+  BalanceCurrency: string;
+  /** 写入时刻（Unix 毫秒），用于活跃判定。 */
+  UpdatedAtMs: number;
+}
+
 /** 岛体当前可见形状（相对窗口客户区的物理像素）。 */
 export interface ShapeRect {
   Left: number;
@@ -86,6 +127,8 @@ export interface ShapeRect {
 export interface Bootstrap {
   Settings: IslandSettings;
   Media: MediaSnapshot | null;
+  /** DeepSeek Harness 状态；未检测到 dsh 时为 null。 */
+  Dsh: DshSnapshot | null;
   Metrics: IslandMetrics;
   /** 当前显示器缩放（DPI / 96）。 */
   Scale: number;
@@ -106,6 +149,7 @@ export const SETTINGS_LABEL = "settings";
 
 export const EVENTS = {
   mediaChanged: "media://changed",
+  dshChanged: "dsh://changed",
   settingsChanged: "settings://changed",
   visibility: "island://visibility",
   collapse: "island://collapse",

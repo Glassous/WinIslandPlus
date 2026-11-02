@@ -22,14 +22,27 @@
           <div class="glow-blob" id="glow3"></div>
         </div>
 
-        <!-- 胶囊态：左侧缩略封面，右侧波形（未展开时不显示任何光晕） -->
+        <!--
+          胶囊态：左侧媒体簇（缩略封面 + 波形），右侧 DeepSeek Harness 簇。
+          没有媒体时媒体簇整体退出布局，dsh 簇在胶囊内居中。
+        -->
         <div class="pill" id="pillView">
-          <div class="pill-cover" id="pillCover" hidden></div>
-          <div class="pill-bars" id="pillBars" aria-hidden="true">
-            <span class="bar" id="bar1"></span>
-            <span class="bar" id="bar2"></span>
-            <span class="bar" id="bar3"></span>
-            <span class="bar" id="bar4"></span>
+          <div class="pill-media" id="pillMedia">
+            <div class="pill-cover" id="pillCover" hidden></div>
+            <div class="pill-bars" id="pillBars" aria-hidden="true">
+              <span class="bar" id="bar1"></span>
+              <span class="bar" id="bar2"></span>
+              <span class="bar" id="bar3"></span>
+              <span class="bar" id="bar4"></span>
+            </div>
+          </div>
+
+          <div class="pill-dsh" id="pillDsh" hidden>
+            <span class="dsh-dot idle" id="pillDshDot" aria-hidden="true"></span>
+            <span class="dsh-stage" id="pillDshStage"></span>
+            <span class="dsh-metric" id="pillDshTokens"></span>
+            <span class="dsh-metric dsh-muted" id="pillDshCost" hidden></span>
+            <span class="dsh-metric dsh-balance" id="pillDshBalance" hidden></span>
           </div>
         </div>
 
@@ -64,15 +77,35 @@
               <div class="time" id="remainingText">-0:00</div>
             </div>
 
-            <div class="card-row card-row-controls">
-              <div class="ctrl" id="prevButton" role="button" aria-label="上一首">
-                <span class="glyph glyph-prev" aria-hidden="true">&#xE892;</span>
+            <div class="card-bottom">
+              <div class="card-row card-row-controls">
+                <div class="ctrl" id="prevButton" role="button" aria-label="上一首">
+                  <span class="glyph glyph-prev" aria-hidden="true">&#xE892;</span>
+                </div>
+                <div class="ctrl" id="playButton" role="button" aria-label="播放/暂停">
+                  <span class="glyph glyph-play" id="playIcon" aria-hidden="true">&#xE768;</span>
+                </div>
+                <div class="ctrl" id="nextButton" role="button" aria-label="下一首">
+                  <span class="glyph glyph-next" aria-hidden="true">&#xE893;</span>
+                </div>
               </div>
-              <div class="ctrl" id="playButton" role="button" aria-label="播放/暂停">
-                <span class="glyph glyph-play" id="playIcon" aria-hidden="true">&#xE768;</span>
-              </div>
-              <div class="ctrl" id="nextButton" role="button" aria-label="下一首">
-                <span class="glyph glyph-next" aria-hidden="true">&#xE893;</span>
+
+              <!-- DeepSeek Harness 信息块：媒体控件下方，出现时卡片向下长出一块 -->
+              <div class="dsh-row" id="cardDsh">
+                <div class="dsh-row-head">
+                  <img class="dsh-logo" src="/src/island/assets/dsh-icon.svg" alt="" aria-hidden="true" />
+                  <div class="dsh-row-title">
+                    <span class="dsh-dot idle" id="cardDshDot" aria-hidden="true"></span>
+                    <span class="dsh-stage" id="cardDshStage"></span>
+                    <span class="dsh-tool" id="cardDshTool" hidden></span>
+                  </div>
+                </div>
+                <div class="dsh-row-body">
+                  <span class="dsh-metric" id="cardDshTokens"></span>
+                  <span class="dsh-metric dsh-muted" id="cardDshCost"></span>
+                  <span class="dsh-metric dsh-balance" id="cardDshBalance"></span>
+                  <span class="dsh-model" id="cardDshModel" hidden></span>
+                </div>
               </div>
             </div>
           </div>

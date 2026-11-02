@@ -3,6 +3,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
+use crate::dsh::DshSnapshot;
 use crate::log;
 use crate::media::MediaSnapshot;
 use crate::metrics::IslandMetrics;
@@ -17,6 +18,7 @@ use crate::{startup, tray};
 pub struct Bootstrap {
     pub settings: IslandSettings,
     pub media: Option<MediaSnapshot>,
+    pub dsh: Option<DshSnapshot>,
     pub metrics: IslandMetrics,
     pub scale: f64,
     pub bottom_anchored: bool,
@@ -45,9 +47,16 @@ pub struct CursorProbe {
 #[tauri::command]
 pub fn bootstrap(state: State<'_, SharedState>) -> Bootstrap {
     let snapshot = state.snapshot();
+    let settings = state.settings.current();
+    let dsh = if settings.dsh_enabled {
+        state.dsh.current()
+    } else {
+        None
+    };
     Bootstrap {
-        settings: state.settings.current(),
+        settings,
         media: state.media.current(),
+        dsh,
         metrics: snapshot.metrics,
         scale: snapshot.scale,
         bottom_anchored: snapshot.bottom_anchored,

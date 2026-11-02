@@ -26,6 +26,8 @@ export class CardGlow {
   private readonly layer: HTMLElement;
   private readonly blobs: Blob[] = [];
   private readonly strengths = [1.0, 0.8, 0.62];
+  private lastWidth = 0;
+  private lastHeight = 0;
   private drifting = false;
   private visible = false;
   private primary: string | null = null;
@@ -48,6 +50,23 @@ export class CardGlow {
     }
 
     this.layout();
+  }
+
+  /**
+   * 跟随卡片实时尺寸：卡片因 dsh 行变高时光斑仍然铺满整张卡。
+   * 尺寸没变化时不做任何写入。
+   */
+  setSize(width: number, height: number): void {
+    if (
+      Math.abs(width - this.lastWidth) < 0.5 &&
+      Math.abs(height - this.lastHeight) < 0.5
+    ) {
+      return;
+    }
+    this.lastWidth = width;
+    this.lastHeight = height;
+    this.layer.style.width = `${width}px`;
+    this.layer.style.height = `${height}px`;
   }
 
   /** 按百分比把三团光斑摆到卡片上（transform 留给漂移动画）。 */

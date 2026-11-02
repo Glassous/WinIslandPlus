@@ -1,5 +1,14 @@
+import {
+  formatBalance,
+  formatCost,
+  formatTokens,
+  showsBalance,
+  stageClass,
+  stageKey,
+  stageLabel,
+} from "../common/dsh";
 import { formatRemaining, formatTime } from "../common/time";
-import type { MediaSnapshot } from "../common/types";
+import type { DshSnapshot, MediaSnapshot } from "../common/types";
 import { SeekBar } from "./seekbar";
 
 export interface CardCallbacks {
@@ -15,6 +24,7 @@ export interface CardCallbacks {
  * 所有交互都基于指针事件（不使用原生控件），因为岛窗永不激活。
  */
 export class MediaCard {
+  private readonly root: HTMLElement;
   private readonly coverImage: HTMLElement;
   private readonly title: HTMLElement;
   private readonly artist: HTMLElement;
@@ -24,7 +34,17 @@ export class MediaCard {
   private readonly remainingText: HTMLElement;
   private readonly seekBar: SeekBar;
 
+  private readonly dsh: HTMLElement;
+  private readonly dshDot: HTMLElement;
+  private readonly dshStage: HTMLElement;
+  private readonly dshTool: HTMLElement;
+  private readonly dshModel: HTMLElement;
+  private readonly dshTokens: HTMLElement;
+  private readonly dshCost: HTMLElement;
+  private readonly dshBalance: HTMLElement;
+
   constructor(root: HTMLElement, callbacks: CardCallbacks) {
+    this.root = root;
     this.coverImage = root.querySelector<HTMLElement>("#coverImageHost")!;
     this.title = root.querySelector<HTMLElement>("#titleText")!;
     this.artist = root.querySelector<HTMLElement>("#artistText")!;
@@ -32,6 +52,15 @@ export class MediaCard {
     this.playIcon = root.querySelector<HTMLElement>("#playIcon")!;
     this.positionText = root.querySelector<HTMLElement>("#positionText")!;
     this.remainingText = root.querySelector<HTMLElement>("#remainingText")!;
+
+    this.dsh = root.querySelector<HTMLElement>("#cardDsh")!;
+    this.dshDot = root.querySelector<HTMLElement>("#cardDshDot")!;
+    this.dshStage = root.querySelector<HTMLElement>("#cardDshStage")!;
+    this.dshTool = root.querySelector<HTMLElement>("#cardDshTool")!;
+    this.dshModel = root.querySelector<HTMLElement>("#cardDshModel")!;
+    this.dshTokens = root.querySelector<HTMLElement>("#cardDshTokens")!;
+    this.dshCost = root.querySelector<HTMLElement>("#cardDshCost")!;
+    this.dshBalance = root.querySelector<HTMLElement>("#cardDshBalance")!;
 
     const seekRoot = root.querySelector<HTMLElement>("#seekBar")!;
     this.seekBar = new SeekBar(seekRoot, {
@@ -85,6 +114,51 @@ export class MediaCard {
     this.positionText.textContent = formatTime(0);
     this.remainingText.textContent = formatRemaining(0, snapshot.DurationMs);
     this.seekBar.setInteractable(snapshot.DurationMs > 0);
+  }
+
+  /** 没有媒体时收起媒体区块，卡片只留底部 dsh 面板（紧凑布局）。 */
+  setMediaVisible(visible: boolean): void {
+    this.root.classList.toggle("no-media", !visible);
+  }
+
+  /**
+   * 写入卡片底部的 dsh 行。
+   * `null` 表示没有 dsh：行高收起到 0，卡片高度由调用方同步缓动回基础值。
+   */
+  setDsh(snapshot: DshSnapshot | null): void {
+    if (!snapshot) {
+      this.dsh.classList.remove("on");
+      return;
+    }
+
+    this.dshDot.className = `dsh-dot ${stageClass(snapshot)}`;
+    this.dshStage.textContent = stageLabel(snapshot);
+
+    // 工具名只在「调用工具 / 等待确认」阶段有意义，空闲时不要挂着上一次的名字
+    const stage = stageKey(snapshot);
+    const showTool = stage === "tool" || stage === "waiting";
+    const tool = showTool ? snapshot.Tool?.trim() ?? "" : "";
+    this.dshTool.hidden = tool.length === 0;
+    this.dshTool.textContent = tool;
+
+    this.dshModel.textContent = snapshot.Model;
+    this.dshModel.hidden = snapshot.Model.trim().length === 0;
+
+    const hasTokens = snapshot.TotalTokens > 0;
+    this.dshTokens.hidden = !hasTokens;
+    this.dshTokens.textContent = `${formatTokens(snapshot.TotalTokens)} tok`;
+
+    const hasCost = snapshot.SessionCost > 0;
+    this.dshCost.hidden = !hasCost;
+    this.dshCost.textContent = formatCost(snapshot.SessionCost, snapshot.Currency);
+
+    const hasBalance = showsBalance(snapshot);
+    this.dshBalance.hidden = !hasBalance;
+    this.dshBalance.textContent = hasBalance
+      ? `余 ${formatBalance(snapshot.Balance ?? 0, snapshot.BalanceCurrency)}`
+      : "";
+
+    this.dsh.classList.add("on");
   }
 
   /** 外部推进进度（拖动中被忽略）。 */

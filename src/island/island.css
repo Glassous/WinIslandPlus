@@ -159,8 +159,17 @@ body.island-body {
   z-index: 4;
   display: flex;
   align-items: center;
+  gap: 10px;
   padding: 0 9px;
   overflow: hidden;
+}
+
+/* 媒体簇：没有媒体时整块退出布局（不是 hidden 的可见性） */
+.pill-media {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .pill-cover {
@@ -279,6 +288,119 @@ body.island-body {
   transform: scaleY(0.45);
 }
 
+/* ---------------- 胶囊 / 卡片共用的 dsh 视觉元素 ---------------- */
+
+/* 用 display 控制的元素：hidden 属性必须能压过 flex/inline 默认值 */
+.pill-media[hidden],
+.pill-dsh[hidden],
+.dsh-metric[hidden],
+.dsh-model[hidden],
+.dsh-tool[hidden] {
+  display: none;
+}
+
+.dsh-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: #6e6e76;
+  transition: background-color 200ms linear;
+}
+
+.dsh-dot.thinking {
+  background: #4da3ff;
+  animation: dsh-breathe 1.6s ease-in-out infinite;
+}
+
+.dsh-dot.tool {
+  background: #f5a524;
+}
+
+.dsh-dot.waiting {
+  background: #b58bff;
+  animation: dsh-pulse 2.2s ease-in-out infinite;
+}
+
+.dsh-dot.done {
+  background: #3ddc97;
+}
+
+@keyframes dsh-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes dsh-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.dsh-stage {
+  font-family: "Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: #f2f2f7;
+  white-space: nowrap;
+}
+
+.dsh-metric {
+  font-family: "Segoe UI Variable Text", Consolas, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: #f2f2f7;
+  white-space: nowrap;
+}
+
+.dsh-muted {
+  color: #9e9ea4;
+}
+
+.dsh-balance {
+  color: #3ddc97;
+}
+
+/* ---------------- 胶囊里的 dsh 簇 ---------------- */
+
+.pill-dsh {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* 没有媒体时 dsh 簇在胶囊内居中 */
+.pill.dsh-only .pill-dsh {
+  margin: 0 auto;
+}
+
+/*
+ * 测量自然宽度：绝对定位 + width:max-content（关键），
+ * 否则绝对定位的收缩宽度会被胶囊当前宽度夹住，量不到真实内容宽度。
+ */
+.pill-dsh.measuring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  margin: 0;
+  width: max-content;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* ---------------- 展开态卡片 ---------------- */
 
 .card {
@@ -290,10 +412,151 @@ body.island-body {
 }
 
 .card-content {
-  display: grid;
-  grid-template-rows: auto auto 1fr;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   width: 100%;
+}
+
+/* 底部区：播放控件在上、dsh 行在下；整块靠卡片底部对齐 */
+.card-bottom {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * dsh 信息块：没有分隔线，靠留白与字号层级分区。
+ * 高度 0 → 66，与卡片高度缓动同步「向下长出一块」；内部允许换行。
+ */
+.dsh-row {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  height: 0;
+  padding-top: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(4px);
+  /* 高度比卡片生长（280ms）略慢，保证永远是「容器先长、内容再填满」，不会被裁掉 */
+  transition:
+    height 320ms cubic-bezier(0.2, 0, 0, 1),
+    padding-top 320ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 180ms linear 60ms,
+    transform 180ms cubic-bezier(0.2, 0, 0, 1) 60ms;
+  will-change: height, opacity;
+}
+
+.dsh-row.on {
+  height: 66px;
+  padding-top: 10px;
+  opacity: 1;
+  transform: none;
+}
+
+.dsh-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 白底圆角方块 + 黑色 logo（图标由 DeepSeek Harness.svg 改造而来） */
+.dsh-logo {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  display: block;
+}
+
+.dsh-row-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  row-gap: 4px;
+  min-width: 0;
+}
+
+.dsh-row-title .dsh-stage {
+  font-size: 13px;
+}
+
+.dsh-row-body {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding-left: 28px;
+  min-width: 0;
+}
+
+.dsh-row-body .dsh-metric,
+.dsh-row-body .dsh-model {
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.dsh-model {
+  font-family: "Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif;
+  line-height: 1;
+  color: #6e6e76;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* 当前工具名：小号等宽 chip */
+.dsh-tool {
+  flex: 0 0 auto;
+  max-width: 132px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.09);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 10.5px;
+  line-height: 1.3;
+  color: #c4c4ca;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 没有媒体：媒体区块整体退出布局，卡片只剩 dsh 面板（紧凑高度） */
+.card.no-media .card-row-top,
+.card.no-media .card-row-progress,
+.card.no-media .card-row-controls {
+  display: none;
+}
+
+.card.no-media .card-content {
+  justify-content: center;
+}
+
+.card.no-media .card-bottom {
+  margin-top: 0;
+}
+
+.card.no-media .dsh-row {
+  height: 100px;
+  padding-top: 0;
+  gap: 9px;
+  justify-content: center;
+}
+
+.card.no-media .dsh-row-title .dsh-stage {
+  font-size: 16px;
+}
+
+.card.no-media .dsh-logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+}
+
+.card.no-media .dsh-row-body {
+  padding-left: 34px;
 }
 
 .card-row-top {

@@ -1,7 +1,12 @@
 import { api, events, on } from "../common/ipc";
-import { metricsFor } from "../common/metrics";
+import { cardHeightFor, metricsFor, pillWidthFor } from "../common/metrics";
 import { currentPosition } from "../common/time";
-import type { IslandMetrics, IslandSettings, MediaSnapshot } from "../common/types";
+import type {
+  DshSnapshot,
+  IslandMetrics,
+  IslandSettings,
+  MediaSnapshot,
+} from "../common/types";
 import { IslandAnimator } from "./animator";
 import { MediaCard } from "./card";
 import { CardGlow } from "./glow";
@@ -14,9 +19,21 @@ const cardEl = document.getElementById("cardView")!;
 let settings: IslandSettings | null = null;
 let metrics: IslandMetrics = metricsFor("Medium", 68);
 let media: MediaSnapshot | null = null;
+let dsh: DshSnapshot | null = null;
+let dshEnabled = true;
 let expanded = false;
 let bottomAnchored = false;
 let dragEnabled = false;
+
+/**
+ * 当前布局目标值。胶囊宽度与卡片高度会随 dsh 的出现 / 消失变化，
+ * 单独抽出来，`onFrame` 里的透明度交叉淡化比才不会写死基础尺寸。
+ */
+const layout = {
+  pillW: metrics.PillWidth,
+  cardW: metrics.CardWidth,
+  cardH: metrics.CardHeight,
+};
 
 const animator = new IslandAnimator();
 animator.onFrame = onFrame;
@@ -40,6 +57,18 @@ const card = new MediaCard(cardEl, {
     }
   },
 });
+
+// ---------------- 右键屏蔽 ----------------
+// 岛窗永不激活，WebView2 的默认上下文菜单会盖在胶囊 / 卡片上，
+// 这里直接吞掉右键菜单事件（覆盖胶囊态与展开态，同一个 DOM）。
+document.addEventListener(
+  "contextmenu",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  },
+  true,
+);
 
 // ---------------- 形状同步 ----------------
 
@@ -77,8 +106,9 @@ function onFrame(width: number, height: number, corner: number): void {
   islandEl.style.height = `${height}px`;
   islandEl.style.borderRadius = `${corner}px`;
 
-  const span = Math.max(1, metrics.CardWidth - metrics.PillWidth);
-  const t = Math.min(1, Math.max(0, (width - metrics.PillWidth) / span));
+  // 交叉淡化的分母用「当前布局」而不是基础尺寸：胶囊被 dsh 拉长后比例依然正确
+  const span = Math.max(1, layout.cardW - layout.pillW);
+  const t = Math.min(1, Math.max(0, (width - layout.pillW) / span));
 
   const pillOpacity = Math.min(1, Math.max(0, 1 - t * 2.2));
   const cardOpacity = Math.min(1, Math.max(0, (t - 0.45) / 0.55));
@@ -106,6 +136,90 @@ function applyMetrics(next: IslandMetrics): void {
   root.setProperty("--card-h", `${next.CardHeight}px`);
 }
 
+/** dsh 视图里参与展示的字段；只有它变化才重新测量宽度。 */
+function dshSignature(snapshot: DshSnapshot): string {
+  return [
+    snapshot.Stage,
+    snapshot.StageLabel,
+    snapshot.Model,
+    snapshot.Tool,
+    snapshot.AuthMode,
+    snapshot.TotalTokens,
+    snapshot.SessionCost,
+    snapshot.Currency,
+    snapshot.Balance,
+    snapshot.BalanceCurrency,
+  ].join("\u001f");
+}
+
+let currentDshSignature = "";
+let currentMediaPresence: boolean | null = null;
+let dshInnerWidth = 0;
+
+/**
+ * 把 dsh 内容写进胶囊与卡片，并返回胶囊里 dsh 簇的自然宽度。
+ * 用签名缓存避免每次媒体进度变化都触发一次强制布局测量。
+ */
+function syncDshViews(): number {
+  const hasMedia = media !== null;
+  const active = dshEnabled ? dsh : null;
+  const signature = active ? dshSignature(active) : "";
+
+  if (signature === currentDshSignature && hasMedia === currentMediaPresence) {
+    return dshInnerWidth;
+  }
+
+  currentDshSignature = signature;
+  currentMediaPresence = hasMedia;
+
+  dshInnerWidth = pill.setDsh(active);
+  card.setDsh(active);
+  card.setMediaVisible(hasMedia);
+
+  return dshInnerWidth;
+}
+
+/** 重新解算布局目标：胶囊宽度 / 卡片高度都可能因 dsh 而变化。 */
+function rebuildLayout(animate: boolean, durationMs = 280): void {
+  const inner = syncDshViews();
+  const hasMedia = media !== null;
+
+  layout.cardW = metrics.CardWidth;
+  layout.pillW = pillWidthFor(metrics, hasMedia, inner);
+  layout.cardH = cardHeightFor(metrics, hasMedia, inner > 0);
+
+  // 光晕铺满整张卡片：卡片因 dsh 行变高时光斑也要跟着摊开
+  glow.setSize(layout.cardW, layout.cardH);
+
+  if (expanded) {
+    animateTo(layout.cardW, layout.cardH, metrics.CardCorner, animate, durationMs);
+  } else {
+    animateTo(layout.pillW, metrics.PillHeight, metrics.PillCorner, animate, 260);
+  }
+}
+
+/** 目标值与当前值一致时不动画，避免无谓的打断。 */
+function animateTo(
+  width: number,
+  height: number,
+  corner: number,
+  animate: boolean,
+  durationMs: number,
+): void {
+  if (!animate || animator.currentWidth <= 0) {
+    animator.snap(width, height, corner);
+    return;
+  }
+
+  const steady =
+    Math.abs(animator.currentWidth - width) < 0.5 &&
+    Math.abs(animator.currentHeight - height) < 0.5 &&
+    Math.abs(animator.currentCorner - corner) < 0.5;
+  if (steady) return;
+
+  animator.animate(width, height, corner, durationMs, "out");
+}
+
 function renderMedia(snapshot: MediaSnapshot | null): void {
   media = snapshot;
 
@@ -115,13 +229,20 @@ function renderMedia(snapshot: MediaSnapshot | null): void {
   glow.setPalette(snapshot?.AccentColor ?? null, snapshot?.AccentColorAlt ?? null);
   glow.setActive(Boolean(snapshot?.ArtworkUrl) && expanded, snapshot?.IsPlaying ?? false);
 
-  if (!snapshot && expanded) {
+  rebuildLayout(true);
+
+  // 媒体消失：只有在没有 dsh 可展示时才自动收起
+  if (!snapshot && expanded && !hasDshContent()) {
     setExpanded(false);
   }
 }
 
+function hasDshContent(): boolean {
+  return dshEnabled && dsh !== null;
+}
+
 function setExpanded(next: boolean, animate = true): void {
-  if (next && !media) return;
+  if (next && !media && !hasDshContent()) return;
   if (expanded === next) return;
 
   expanded = next;
@@ -132,8 +253,8 @@ function setExpanded(next: boolean, animate = true): void {
 
   glow.setActive(next && Boolean(media?.ArtworkUrl), media?.IsPlaying ?? false);
 
-  const width = next ? metrics.CardWidth : metrics.PillWidth;
-  const height = next ? metrics.CardHeight : metrics.PillHeight;
+  const width = next ? layout.cardW : layout.pillW;
+  const height = next ? layout.cardH : metrics.PillHeight;
   const corner = next ? metrics.CardCorner : metrics.PillCorner;
 
   if (animate) {
@@ -144,7 +265,7 @@ function setExpanded(next: boolean, animate = true): void {
 }
 
 function toggleExpanded(): void {
-  if (!media) return;
+  if (!media && !hasDshContent()) return;
   // 设置窗口打开期间岛体是"可拖动"状态，点击不再切换
   if (dragEnabled) return;
   setExpanded(!expanded);
@@ -176,13 +297,26 @@ function bindEvents(): void {
     renderMedia(snapshot ?? null);
   });
 
+  on<DshSnapshot | null>(events.dshChanged, (snapshot) => {
+    dsh = snapshot ?? null;
+    rebuildLayout(true);
+
+    if (!dsh && expanded && !media) {
+      setExpanded(false);
+    }
+  });
+
   on<IslandSettings>(events.settingsChanged, (next) => {
     settings = next;
+    dshEnabled = next.DshEnabled !== false;
+
     const updated = metricsFor(next.Size, next.CustomPillWidth);
     const sizeChanged =
-      updated.CardWidth !== metrics.CardWidth ||
       updated.PillWidth !== metrics.PillWidth ||
-      updated.CardHeight !== metrics.CardHeight;
+      updated.CardWidth !== metrics.CardWidth ||
+      updated.CardHeight !== metrics.CardHeight ||
+      updated.PillCorner !== metrics.PillCorner ||
+      updated.CardCorner !== metrics.CardCorner;
 
     applyMetrics(updated);
 
@@ -192,19 +326,8 @@ function bindEvents(): void {
       islandEl.classList.toggle("bottom", bottom);
     }
 
-    if (!animator.isAnimating) {
-      animator.snap(
-        expanded ? updated.CardWidth : updated.PillWidth,
-        expanded ? updated.CardHeight : updated.PillHeight,
-        expanded ? updated.CardCorner : updated.PillCorner,
-      );
-    } else if (sizeChanged) {
-      animator.snap(
-        expanded ? updated.CardWidth : updated.PillWidth,
-        expanded ? updated.CardHeight : updated.PillHeight,
-        expanded ? updated.CardCorner : updated.PillCorner,
-      );
-    }
+    // 尺寸档位变化直接落位；只有 dsh 引起的宽高变化才走缓动
+    rebuildLayout(!sizeChanged);
   });
 
   on<string>(events.collapse, () => setExpanded(false));
@@ -226,14 +349,16 @@ async function init(): Promise<void> {
   const boot = await api.bootstrap();
 
   settings = boot.Settings;
+  dshEnabled = boot.Settings.DshEnabled !== false;
+  dsh = boot.Dsh ?? null;
   bottomAnchored = boot.BottomAnchored || boot.Settings.Placement === "BottomCenter";
   islandEl.classList.toggle("bottom", bottomAnchored);
 
   applyMetrics(metricsFor(boot.Settings.Size, boot.Settings.CustomPillWidth));
 
   islandEl.style.opacity = "0";
+  // 首帧直接用 renderMedia 走一遍完整布局（animator 尚未有当前值，会走 snap）
   renderMedia(boot.Media ?? null);
-  animator.snap(metrics.PillWidth, metrics.PillHeight, metrics.PillCorner);
 
   bindEvents();
   startProgressLoop();
