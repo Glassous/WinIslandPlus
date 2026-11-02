@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WinIslandPlus</title>
+    <link rel="stylesheet" href="/src/island/island.css" />
+  </head>
+  <body class="island-body">
+    <!--
+      整块客户区透明：窗口尺寸固定为展开态卡片尺寸，
+      可见形状（胶囊 / 卡片）由内部的 #island 元素用 width/height/border-radius 动画得到，
+      圆角外的像素是真正的逐像素透明，点击由 Rust 轮询判定后穿透到下方窗口。
+    -->
+    <div class="stage" id="stage">
+      <div class="island" id="island">
+        <!-- 展开态：封面取色光晕（铺满整张卡片，不参与命中测试） -->
+        <div class="glow-layer" id="glowLayer" aria-hidden="true">
+          <div class="glow-blob" id="glow1"></div>
+          <div class="glow-blob" id="glow2"></div>
+          <div class="glow-blob" id="glow3"></div>
+        </div>
+
+        <!-- 胶囊态：左侧缩略封面，右侧波形（未展开时不显示任何光晕） -->
+        <div class="pill" id="pillView">
+          <div class="pill-cover" id="pillCover" hidden></div>
+          <div class="pill-bars" id="pillBars" aria-hidden="true">
+            <span class="bar" id="bar1"></span>
+            <span class="bar" id="bar2"></span>
+            <span class="bar" id="bar3"></span>
+            <span class="bar" id="bar4"></span>
+          </div>
+        </div>
+
+        <!-- 展开态：媒体控制卡片 -->
+        <div class="card" id="cardView">
+          <div class="card-content">
+            <div class="card-row card-row-top">
+              <div class="cover" id="coverCard">
+                <div class="cover-placeholder" id="coverPlaceholder">
+                  <span class="glyph glyph-cover" aria-hidden="true">&#xE8D6;</span>
+                </div>
+                <div class="cover-image" id="coverImageHost"></div>
+              </div>
+
+              <div class="track-info">
+                <div class="title" id="titleText">未知曲目</div>
+                <div class="artist" id="artistText">未知艺术家</div>
+              </div>
+
+              <div class="eq-bars" id="eqBars" aria-hidden="true">
+                <span></span><span></span><span></span><span></span>
+              </div>
+            </div>
+
+            <div class="card-row card-row-progress">
+              <div class="time" id="positionText">0:00</div>
+              <div class="seekbar" id="seekBar" role="slider" aria-label="播放进度">
+                <div class="seek-track" id="seekTrack"></div>
+                <div class="seek-fill" id="seekFill"></div>
+                <div class="seek-thumb" id="seekThumb"></div>
+              </div>
+              <div class="time" id="remainingText">-0:00</div>
+            </div>
+
+            <div class="card-row card-row-controls">
+              <div class="ctrl" id="prevButton" role="button" aria-label="上一首">
+                <span class="glyph glyph-prev" aria-hidden="true">&#xE892;</span>
+              </div>
+              <div class="ctrl" id="playButton" role="button" aria-label="播放/暂停">
+                <span class="glyph glyph-play" id="playIcon" aria-hidden="true">&#xE768;</span>
+              </div>
+              <div class="ctrl" id="nextButton" role="button" aria-label="下一首">
+                <span class="glyph glyph-next" aria-hidden="true">&#xE893;</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/island/main.ts"></script>
+  </body>
+</html>

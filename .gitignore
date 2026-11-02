@@ -1,0 +1,39 @@
+# ---------------- 依赖与前端构建产物 ----------------
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# ---------------- Rust / Tauri 构建产物 ----------------
+# target 目录会到 GB 级，且包含 NSIS 中间产物，绝不能入库
+src-tauri/target/
+# tauri-build 生成的 capability schema（下次构建自动重建）
+src-tauri/gen/
+
+# ---------------- 交付产物 ----------------
+# 只保留目录占位文件，安装包与绿色版可执行文件不入库
+release/*
+!release/.gitkeep
+
+# ---------------- 生成的移动端图标 ----------------
+# 本仓库只做 Windows；`pnpm tauri icon` 会顺带生成 android/ios，这里忽略
+src-tauri/icons/android/
+src-tauri/icons/ios/
+
+# ---------------- 日志与临时文件 ----------------
+*.log
+npm-debug.log*
+pnpm-debug.log*
+*.tmp
+
+# ---------------- 编辑器 ----------------
+.vs/
+.idea/
+.vscode/
+*.suo
+*.user
+
+# ---------------- 系统垃圾 ----------------
+.DS_Store
+Thumbs.db
+desktop.ini

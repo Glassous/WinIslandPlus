@@ -1,0 +1,410 @@
+/* 设置窗口：Fluent 风格外观（自绘 ComboBox / ToggleSwitch / Slider）。 */
+
+* {
+  box-sizing: border-box;
+}
+
+/* display 由 .panel / .card-stack 等显式声明，必须让 hidden 属性优先 */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body.settings-body {
+  background: var(--page-bg);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.settings-root {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  height: 100vh;
+}
+
+.settings-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px 24px 8px 24px;
+}
+
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.section-header {
+  margin-top: 6px;
+  padding-left: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-stroke);
+  border-radius: var(--radius-card);
+  padding: 12px 16px;
+}
+
+.card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.row-label {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.row-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.row-control {
+  width: 200px;
+}
+
+.row-switch {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: 12px;
+}
+
+.row-value {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.row-actions {
+  display: flex;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* ---------------- 按钮 ---------------- */
+
+.button {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--control-stroke);
+  background: var(--control-bg);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color 83ms linear,
+    border-color 83ms linear;
+}
+
+.button:hover {
+  background: var(--control-bg-hover);
+}
+
+.button:active {
+  background: var(--control-bg-pressed);
+  color: var(--text-secondary);
+}
+
+.button-accent {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.button-accent:hover {
+  background: var(--accent-hover);
+}
+
+.button-accent:active {
+  background: var(--accent-pressed);
+  color: var(--accent-text);
+}
+
+/* ---------------- ComboBox ---------------- */
+
+.combo {
+  position: relative;
+}
+
+.combo-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px 0 11px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--control-stroke);
+  background: var(--control-bg);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 83ms linear;
+}
+
+.combo-button:hover {
+  background: var(--control-bg-hover);
+}
+
+.combo-button:active {
+  background: var(--control-bg-pressed);
+}
+
+.combo-value {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.combo-chevron {
+  font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets";
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+}
+
+.combo-popup {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--popup-stroke);
+  background: var(--popup-bg);
+  box-shadow: var(--overlay-shadow);
+}
+
+.combo-popup[hidden] {
+  display: none;
+}
+
+.combo-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-control);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.combo-item:hover {
+  background: var(--row-hover);
+}
+
+.combo-item .check {
+  font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets";
+  font-size: 12px;
+  color: var(--accent);
+  visibility: hidden;
+}
+
+.combo-item.selected .check {
+  visibility: visible;
+}
+
+/* ---------------- ToggleSwitch ---------------- */
+
+.toggle {
+  position: relative;
+  width: 40px;
+  height: 20px;
+  border-radius: 10px;
+  border: 1px solid var(--control-stroke-strong);
+  background: transparent;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition:
+    background-color 167ms linear,
+    border-color 167ms linear;
+}
+
+.toggle::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition:
+    left 167ms cubic-bezier(0, 0, 0, 1),
+    width 167ms cubic-bezier(0, 0, 0, 1),
+    height 167ms cubic-bezier(0, 0, 0, 1),
+    margin-top 167ms cubic-bezier(0, 0, 0, 1),
+    background-color 167ms linear;
+}
+
+.toggle.on {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.toggle.on::after {
+  left: 21px;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  background: var(--accent-text);
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+/* ---------------- Slider ---------------- */
+
+.slider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 32px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.slider-rail {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--control-stroke-strong);
+}
+
+.slider-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.slider-thumb {
+  position: absolute;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  margin-top: -10px;
+  margin-left: -10px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+  transition:
+    transform 100ms linear,
+    box-shadow 100ms linear;
+}
+
+.slider:hover .slider-thumb {
+  transform: scale(1.06);
+}
+
+.slider.dragging .slider-thumb {
+  transform: scale(0.9);
+}
+
+/* ---------------- 底栏 ---------------- */
+
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 24px;
+  background: var(--layer-bg);
+  border-top: 1px solid var(--card-stroke);
+}
+
+.footer-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.footer-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* ---------------- 滚动条 ---------------- */
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 4px solid transparent;
+  background-clip: content-box;
+  border-radius: 6px;
+}

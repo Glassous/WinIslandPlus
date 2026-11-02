@@ -1,0 +1,58 @@
+/* Fluent 令牌（浅 / 深色）。取值参照 Windows 11 默认主题资源，供设置窗口使用。 */
+
+:root {
+  color-scheme: light dark;
+
+  /* 深色（默认） */
+  --page-bg: #202020;
+  --card-bg: #2c2c2c;
+  --card-stroke: rgba(255, 255, 255, 0.06);
+  --layer-bg: #272727;
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.786);
+  --text-tertiary: rgba(255, 255, 255, 0.544);
+  --control-bg: rgba(255, 255, 255, 0.0605);
+  --control-bg-hover: rgba(255, 255, 255, 0.0837);
+  --control-bg-pressed: rgba(255, 255, 255, 0.0326);
+  --control-stroke: rgba(255, 255, 255, 0.0698);
+  --control-stroke-strong: rgba(255, 255, 255, 0.544);
+  --accent: #4cc2ff;
+  --accent-hover: #6ecfff;
+  --accent-pressed: #3aa9e0;
+  --accent-text: #000000;
+  --popup-bg: #2c2c2c;
+  --popup-stroke: rgba(255, 255, 255, 0.093);
+  --row-hover: rgba(255, 255, 255, 0.0605);
+  --overlay-shadow: 0 8px 16px rgba(0, 0, 0, 0.26);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.28);
+
+  --radius-card: 8px;
+  --radius-control: 4px;
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --page-bg: #f3f3f3;
+    --card-bg: #fbfbfb;
+    --card-stroke: rgba(0, 0, 0, 0.0578);
+    --layer-bg: #f6f6f6;
+    --text-primary: #1b1b1b;
+    --text-secondary: rgba(0, 0, 0, 0.6063);
+    --text-tertiary: rgba(0, 0, 0, 0.4458);
+    --control-bg: rgba(255, 255, 255, 0.7);
+    --control-bg-hover: rgba(249, 249, 249, 0.5);
+    --control-bg-pressed: rgba(249, 249, 249, 0.3);
+    --control-stroke: rgba(0, 0, 0, 0.0578);
+    --control-stroke-strong: rgba(0, 0, 0, 0.4458);
+    --accent: #0078d4;
+    --accent-hover: #1a86d9;
+    --accent-pressed: #0063b1;
+    --accent-text: #ffffff;
+    --popup-bg: #fbfbfb;
+    --popup-stroke: rgba(0, 0, 0, 0.0578);
+    --row-hover: rgba(0, 0, 0, 0.0373);
+    --overlay-shadow: 0 8px 16px rgba(0, 0, 0, 0.14);
+    --scrollbar-thumb: rgba(0, 0, 0, 0.28);
+  }
+}

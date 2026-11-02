@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WinIslandPlus 设置</title>
+    <link rel="stylesheet" href="/src/styles/tokens.css" />
+    <link rel="stylesheet" href="/src/settings/fluent.css" />
+  </head>
+  <body class="settings-body">
+    <div class="settings-root" id="root">
+      <div class="settings-scroll" id="scroll">
+        <div class="settings-stack">
+          <!-- 外观 -->
+          <div class="section-header">外观</div>
+          <div class="card">
+            <div class="card-stack">
+              <div class="row">
+                <div class="row-label">尺寸档位</div>
+                <div class="row-control">
+                  <div class="combo" id="sizeCombo" data-role="combo"></div>
+                </div>
+              </div>
+
+              <div class="panel" id="customSizePanel" hidden>
+                <div class="panel-head">
+                  <div class="row-label">胶囊宽度（2:1 比例）</div>
+                  <div class="row-value" id="widthValue">84 × 42</div>
+                </div>
+                <div class="slider" id="widthSlider" data-role="slider" data-min="60" data-max="96" data-step="2"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 位置 -->
+          <div class="section-header">位置</div>
+          <div class="card">
+            <div class="card-stack">
+              <div class="row">
+                <div class="row-label">预设落位</div>
+                <div class="row-control">
+                  <div class="combo" id="placementCombo" data-role="combo"></div>
+                </div>
+              </div>
+              <div class="row-hint">
+                打开本设置窗口期间，可以直接按住岛体拖动到屏幕任意位置，松手即记住；关闭设置后位置自动锁定，平时无法误拖动。
+              </div>
+              <div class="row-actions">
+                <button class="button" type="button" id="resetPositionButton">
+                  <span class="button-text">重置为顶部居中</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 行为 -->
+          <div class="section-header">行为</div>
+          <div class="card">
+            <div class="card-stack">
+              <div class="row">
+                <div class="row-text">
+                  <div class="row-label">常驻模式</div>
+                  <div class="row-hint">没有媒体时也保持显示一个静止胶囊（点击不展开）。</div>
+                </div>
+                <div class="row-switch">
+                  <div class="toggle" id="persistentSwitch" data-role="toggle" role="switch" aria-checked="false" tabindex="0"></div>
+                </div>
+              </div>
+
+              <div class="row">
+                <div class="row-text">
+                  <div class="row-label">暂停时自动收起</div>
+                  <div class="row-hint">播放暂停时从展开态自动回到胶囊态。</div>
+                </div>
+                <div class="row-switch">
+                  <div class="toggle" id="autoCollapseSwitch" data-role="toggle" role="switch" aria-checked="false" tabindex="0"></div>
+                </div>
+              </div>
+
+              <div class="row">
+                <div class="row-text">
+                  <div class="row-label">离开时自动收起</div>
+                  <div class="row-hint">光标离开岛体后自动回到胶囊；关闭后只有点击其它位置才会收起。</div>
+                </div>
+                <div class="row-switch">
+                  <div class="toggle" id="idleCollapseSwitch" data-role="toggle" role="switch" aria-checked="false" tabindex="0"></div>
+                </div>
+              </div>
+
+              <div class="panel" id="idleCollapseDelayPanel">
+                <div class="panel-head">
+                  <div class="row-label">收起延迟</div>
+                  <div class="row-value" id="idleCollapseDelayValue">2.5 秒</div>
+                </div>
+                <div class="slider" id="idleCollapseDelaySlider" data-role="slider" data-min="1" data-max="15" data-step="0.5"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 系统 -->
+          <div class="section-header">系统</div>
+          <div class="card">
+            <div class="card-stack">
+              <div class="row">
+                <div class="row-text">
+                  <div class="row-label">开机自启</div>
+                  <div class="row-hint">写入当前用户的启动项，不需要管理员权限。</div>
+                </div>
+                <div class="row-switch">
+                  <div class="toggle" id="autoStartSwitch" data-role="toggle" role="switch" aria-checked="false" tabindex="0"></div>
+                </div>
+              </div>
+              <div class="row-hint" id="versionText">WinIslandPlus</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-footer">
+        <div class="footer-hint" id="hintText"></div>
+        <div class="footer-actions">
+          <button class="button" type="button" id="cancelButton"><span class="button-text">取消</span></button>
+          <button class="button button-accent" type="button" id="saveButton"><span class="button-text">保存</span></button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/settings/main.ts"></script>
+  </body>
+</html>
