@@ -368,8 +368,10 @@ body.island-body {
   color: #9e9ea4;
 }
 
+/* 余额：与正文同色，只靠字重强调，不用彩色 */
 .dsh-balance {
-  color: #3ddc97;
+  color: #f2f2f7;
+  font-weight: 600;
 }
 
 /* ---------------- 胶囊里的 dsh 簇 ---------------- */

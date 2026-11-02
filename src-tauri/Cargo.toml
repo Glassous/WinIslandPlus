@@ -1,6 +1,6 @@
 [package]
 name = "win-island-plus"
-version = "1.1.2"
+version = "1.1.4"
 description = "Dynamic Island for Windows 11"
 authors = ["WinIslandPlus"]
 edition = "2021"

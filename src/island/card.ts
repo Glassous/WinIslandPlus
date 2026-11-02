@@ -155,7 +155,7 @@ export class MediaCard {
     const hasBalance = showsBalance(snapshot);
     this.dshBalance.hidden = !hasBalance;
     this.dshBalance.textContent = hasBalance
-      ? `余 ${formatBalance(snapshot.Balance ?? 0, snapshot.BalanceCurrency)}`
+      ? `余额 ${formatBalance(snapshot.Balance ?? 0, snapshot.BalanceCurrency)}`
       : "";
 
     this.dsh.classList.add("on");

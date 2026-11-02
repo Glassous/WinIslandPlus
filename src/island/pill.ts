@@ -90,8 +90,9 @@ export class PillView {
     this.dshCost.textContent = formatCost(snapshot.SessionCost, snapshot.Currency);
 
     this.balanceAvailable = showsBalance(snapshot);
+    // 胶囊里只放金额本身，不加「余」字
     this.dshBalance.textContent = this.balanceAvailable
-      ? `余${formatBalance(snapshot.Balance ?? 0, snapshot.BalanceCurrency)}`
+      ? formatBalance(snapshot.Balance ?? 0, snapshot.BalanceCurrency)
       : "";
 
     this.applyFolding(true, true);
