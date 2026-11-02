@@ -15,12 +15,8 @@
     -->
     <div class="stage" id="stage">
       <div class="island" id="island">
-        <!-- 展开态：封面取色光晕（铺满整张卡片，不参与命中测试） -->
-        <div class="glow-layer" id="glowLayer" aria-hidden="true">
-          <div class="glow-blob" id="glow1"></div>
-          <div class="glow-blob" id="glow2"></div>
-          <div class="glow-blob" id="glow3"></div>
-        </div>
+        <!-- 展开态：封面取色流光（光源由 glow.ts 生成，只在卡片边缘局部游走） -->
+        <div class="glow-layer" id="glowLayer" aria-hidden="true"></div>
 
         <!--
           胶囊态：左侧媒体簇（缩略封面 + 波形），右侧 DeepSeek Harness 簇。

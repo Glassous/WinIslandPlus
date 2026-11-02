@@ -15,7 +15,7 @@ export const DSH_ONLY_CARD_HEIGHT = 132;
 /** 胶囊左右内边距合计（与 `.pill { padding: 0 9px }` 对应）。 */
 export const PILL_PADDING = 18;
 /** 胶囊里媒体簇与 dsh 簇之间的间距（不再有分隔线）。 */
-export const PILL_GAP = 10;
+export const PILL_GAP = 8;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -27,19 +27,26 @@ export function dshInnerMaxWidth(): number {
 }
 
 /**
- * 胶囊宽度：有媒体时在基础宽度上追加 dsh 区，没有媒体时 dsh 区自成胶囊。
+ * 胶囊宽度：
+ * - 没有 dsh：回到基础宽度（纯媒体态的「封面在左、波形在右」）；
+ * - 媒体 + dsh：内边距 + 媒体簇实际宽度 + 间距 + dsh 内容宽度，按内容收紧。
+ *   以前固定给 dsh 一个 96~132 的宽区，媒体簇再被拉伸填满剩余空间，
+ *   结果封面和频谱之间空出一大块；
+ * - 只有 dsh：dsh 自成胶囊，仍夹在 DSH_PILL_MIN~MAX 之间。
  * `dshInnerWidth` 为 0 表示没有 dsh 内容。
  */
 export function pillWidthFor(
   m: IslandMetrics,
   hasMedia: boolean,
   dshInnerWidth: number,
+  mediaWidth = 0,
 ): number {
   if (dshInnerWidth <= 0) return m.PillWidth;
   if (!hasMedia) {
     return clamp(dshInnerWidth + PILL_PADDING, DSH_PILL_MIN, DSH_PILL_MAX);
   }
-  return m.PillWidth + clamp(dshInnerWidth + PILL_GAP, DSH_PILL_MIN, DSH_PILL_MAX);
+  // +2：offsetWidth 取整后的零头，避免贴边的内容被 overflow 裁掉 1~2px
+  return Math.ceil(mediaWidth + PILL_PADDING + PILL_GAP + dshInnerWidth) + 2;
 }
 
 /** 展开卡片高度：dsh 行出现时追加一行，无媒体时回落到紧凑高度。 */

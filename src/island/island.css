@@ -73,7 +73,7 @@ body.island-body {
   bottom: 0;
 }
 
-/* ---------------- 封面取色光晕 ---------------- */
+/* ---------------- 封面取色流光 ---------------- */
 
 .glow-layer {
   z-index: 1;
@@ -89,6 +89,14 @@ body.island-body {
   will-change: transform;
 }
 
+/* 纵向漂移层：与 .glow-blob 的横向漂移分开，两个周期一合成就是缓慢游走的光路 */
+.glow-blob-flow {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  will-change: transform;
+}
+
 .glow-blob-core {
   width: 100%;
   height: 100%;
@@ -96,58 +104,101 @@ body.island-body {
   will-change: transform;
 }
 
-@keyframes glow-drift-0 {
-  0% {
-    transform: translate(0, 0);
-  }
-  33% {
-    transform: translate(16px, -11px);
-  }
-  66% {
-    transform: translate(-11.2px, 15.4px);
-  }
+/*
+ * 动态流光：每个轴各自以不同的周期做正弦往返（ease-in-out 在每个关键段
+ * 起止速度都是 0），两轴叠加后是一条不断游走的闭合曲线，没有折返硬拐点。
+ *
+ * 振幅写死在这里（不用 var），保证动画在任何 WebView 上都能跑起来；
+ * 4 组关键帧按光源序号循环，方向与幅度各不相同，光路不显机械。
+ * 周期在 theme.glowFlowSeconds 里。
+ */
+@keyframes glow-flow-x-0 {
+  0%,
   100% {
-    transform: translate(0, 0);
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(44px, 0, 0);
   }
 }
 
-@keyframes glow-drift-1 {
-  0% {
-    transform: translate(0, 0);
-  }
-  33% {
-    transform: translate(25px, -8px);
-  }
-  66% {
-    transform: translate(-17.5px, 11.2px);
-  }
+@keyframes glow-flow-x-1 {
+  0%,
   100% {
-    transform: translate(0, 0);
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(-38px, 0, 0);
   }
 }
 
-@keyframes glow-drift-2 {
-  0% {
-    transform: translate(0, 0);
-  }
-  33% {
-    transform: translate(34px, -5px);
-  }
-  66% {
-    transform: translate(-23.8px, 7px);
-  }
+@keyframes glow-flow-x-2 {
+  0%,
   100% {
-    transform: translate(0, 0);
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(62px, 0, 0);
+  }
+}
+
+@keyframes glow-flow-x-3 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(-50px, 0, 0);
+  }
+}
+
+@keyframes glow-flow-y-0 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, 30px, 0);
+  }
+}
+
+@keyframes glow-flow-y-1 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -42px, 0);
+  }
+}
+
+@keyframes glow-flow-y-2 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, 36px, 0);
+  }
+}
+
+@keyframes glow-flow-y-3 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -28px, 0);
   }
 }
 
 @keyframes glow-breath {
   0%,
   100% {
-    transform: scale(0.92);
+    transform: scale(var(--glow-scale-min, 0.9));
   }
   50% {
-    transform: scale(1.08);
+    transform: scale(var(--glow-scale-max, 1.1));
   }
 }
 
@@ -159,7 +210,7 @@ body.island-body {
   z-index: 4;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 0 9px;
   overflow: hidden;
 }
@@ -168,8 +219,26 @@ body.island-body {
 .pill-media {
   display: flex;
   align-items: center;
+  gap: 5px;
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/*
+ * 有 dsh 时媒体簇不再拉伸：波形紧跟封面。
+ * 否则弹性空间全部落在「封面 → 波形」之间，dsh 区越宽这一块空白越大；
+ * 现在空白统一留在媒体簇与 dsh 簇之间。
+ */
+.pill.has-dsh:not(.dsh-only) .pill-media {
+  flex: 0 0 auto;
+}
+
+.pill.has-dsh:not(.dsh-only) .pill-bars {
+  margin-left: 0;
+}
+
+.pill.has-dsh:not(.dsh-only) .pill-dsh {
+  margin-left: auto;
 }
 
 .pill-cover {

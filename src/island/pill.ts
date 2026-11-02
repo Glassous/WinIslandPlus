@@ -48,6 +48,15 @@ export class PillView {
     this.dshBalance = root.querySelector<HTMLElement>("#pillDshBalance")!;
   }
 
+  /**
+   * 媒体簇当前的实际内容宽度（DIP）。有 dsh 时胶囊按它收紧，
+   * 这样"封面 → 频谱"和"频谱 → dsh"两段间距都只由 CSS 的固定 gap 决定。
+   */
+  mediaWidth(): number {
+    if (this.media.hidden) return 0;
+    return this.media.offsetWidth;
+  }
+
   setMedia(snapshot: MediaSnapshot | null): void {
     const artwork = snapshot?.ArtworkUrl ?? null;
 
@@ -75,7 +84,7 @@ export class PillView {
   setDsh(snapshot: DshSnapshot | null): number {
     if (!snapshot) {
       this.dshEl.hidden = true;
-      this.root.classList.remove("dsh-only");
+      this.root.classList.remove("dsh-only", "has-dsh");
       return 0;
     }
 
@@ -98,6 +107,8 @@ export class PillView {
     this.applyFolding(true, true);
 
     this.dshEl.hidden = false;
+    // has-dsh 让媒体簇收回内容宽度（波形紧跟封面），dsh 簇顶到胶囊右侧
+    this.root.classList.add("has-dsh");
     this.root.classList.toggle("dsh-only", this.media.hidden);
 
     return this.measure();

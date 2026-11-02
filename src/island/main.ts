@@ -152,9 +152,17 @@ function dshSignature(snapshot: DshSnapshot): string {
   ].join("\u001f");
 }
 
-let currentDshSignature = "";
-let currentMediaPresence: boolean | null = null;
+let currentPillSignature: string | null = null;
 let dshInnerWidth = 0;
+
+/**
+ * 胶囊布局的相关状态：dsh 展示字段 + 媒体形态（有无媒体、有无封面）。
+ * 封面出现 / 消失会改变媒体簇宽度，因此必须参与缓存键。
+ */
+function pillSignature(active: DshSnapshot | null): string {
+  const mediaShape = `${media ? "m" : "-"}${media?.ArtworkUrl ? "a" : "-"}`;
+  return `${mediaShape}\u001e${active ? dshSignature(active) : ""}`;
+}
 
 /**
  * 把 dsh 内容写进胶囊与卡片，并返回胶囊里 dsh 簇的自然宽度。
@@ -163,14 +171,13 @@ let dshInnerWidth = 0;
 function syncDshViews(): number {
   const hasMedia = media !== null;
   const active = dshEnabled ? dsh : null;
-  const signature = active ? dshSignature(active) : "";
+  const signature = pillSignature(active);
 
-  if (signature === currentDshSignature && hasMedia === currentMediaPresence) {
+  if (signature === currentPillSignature) {
     return dshInnerWidth;
   }
 
-  currentDshSignature = signature;
-  currentMediaPresence = hasMedia;
+  currentPillSignature = signature;
 
   dshInnerWidth = pill.setDsh(active);
   card.setDsh(active);
@@ -185,10 +192,11 @@ function rebuildLayout(animate: boolean, durationMs = 280): void {
   const hasMedia = media !== null;
 
   layout.cardW = metrics.CardWidth;
-  layout.pillW = pillWidthFor(metrics, hasMedia, inner);
+  // 有 dsh 时按媒体簇的实际宽度收紧胶囊：媒体贴左、dsh 贴右，中间只有 gap
+  layout.pillW = pillWidthFor(metrics, hasMedia, inner, pill.mediaWidth());
   layout.cardH = cardHeightFor(metrics, hasMedia, inner > 0);
 
-  // 光晕铺满整张卡片：卡片因 dsh 行变高时光斑也要跟着摊开
+  // 光斑按百分比锚定在卡片边缘：卡片因 dsh 行变高时局部流光跟随拉伸
   glow.setSize(layout.cardW, layout.cardH);
 
   if (expanded) {
@@ -227,7 +235,7 @@ function renderMedia(snapshot: MediaSnapshot | null): void {
   card.update(snapshot);
 
   glow.setPalette(snapshot?.AccentColor ?? null, snapshot?.AccentColorAlt ?? null);
-  glow.setActive(Boolean(snapshot?.ArtworkUrl) && expanded, snapshot?.IsPlaying ?? false);
+  glow.setActive(Boolean(snapshot?.ArtworkUrl) && expanded);
 
   rebuildLayout(true);
 
@@ -251,7 +259,7 @@ function setExpanded(next: boolean, animate = true): void {
   cardEl.style.pointerEvents = next ? "auto" : "none";
   pillEl.style.pointerEvents = next ? "none" : "auto";
 
-  glow.setActive(next && Boolean(media?.ArtworkUrl), media?.IsPlaying ?? false);
+  glow.setActive(next && Boolean(media?.ArtworkUrl));
 
   const width = next ? layout.cardW : layout.pillW;
   const height = next ? layout.cardH : metrics.PillHeight;
