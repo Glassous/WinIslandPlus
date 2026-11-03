@@ -6,6 +6,7 @@ mod commands;
 mod dsh;
 mod interop;
 mod log;
+mod lyrics;
 mod media;
 mod metrics;
 mod placement;
@@ -21,6 +22,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 use crate::dsh::DshService;
+use crate::lyrics::LyricsService;
 use crate::media::MediaService;
 use crate::settings::SettingsService;
 use crate::state::{Shared, SharedState};
@@ -39,6 +41,7 @@ pub fn run() {
 
     let media = MediaService::new();
     let dsh = DshService::new();
+    let lyrics = LyricsService::new();
     let shared: SharedState = Arc::new(Shared::new(settings, media.clone(), dsh.clone()));
     let setup_state = shared.clone();
 
@@ -69,7 +72,8 @@ pub fn run() {
             }
 
             setup_state.recompute(&handle);
-            media.start(handle.clone());
+            media.start(handle.clone(), lyrics.clone());
+            lyrics.start(handle.clone());
             dsh.start(handle.clone());
             tray::create(&handle, &setup_state);
             poller::start(handle.clone(), setup_state.clone());

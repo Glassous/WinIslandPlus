@@ -1,4 +1,3 @@
-import { withAlpha } from "../common/color";
 import type { MediaSnapshot } from "../common/types";
 
 /**
@@ -51,16 +50,4 @@ export class MediaPillView {
     this.bars.classList.toggle("playing", playing);
     this.bars.classList.toggle("frozen", !playing);
   }
-}
-
-/**
- * 径向渐变：中心峰值 → 55% 处为峰值的 `midRatio` → 边缘全透明。
- * 三档渐变 stop（胶囊 midRatio = 0.32，卡片光斑 = 0.34）。
- */
-export function radialGlow(color: string, peakOpacity: number, midRatio = 0.32): string {
-  const middle = peakOpacity * midRatio;
-  return `radial-gradient(circle closest-side, ${withAlpha(color, peakOpacity)} 0%, ${withAlpha(
-    color,
-    middle,
-  )} 55%, ${withAlpha(color, 0)} 100%)`;
 }

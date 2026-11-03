@@ -9,7 +9,11 @@ import type { IslandMetrics, IslandSizePreset } from "./types";
  */
 export const DSH_PILL_MIN = 96;
 export const DSH_PILL_MAX = 132;
-export const DSH_ONLY_CARD_HEIGHT = 132;
+/**
+ * dsh 独立展开卡片的高度：只留「头部一行 + 指标一行」+ 少量上下呼吸（约 12~21px），
+ * 避免内容被居中悬在卡片正中、上下各留一大片空白。
+ */
+export const DSH_ONLY_CARD_HEIGHT = 88;
 /** 胶囊左右内边距合计（与 `.actor > .pill-layer { padding: 0 9px }` 对应）。 */
 export const PILL_PADDING = 18;
 /** 同一行内两个岛之间的间距。 */
@@ -59,7 +63,7 @@ export function metricsFor(
         PillWidth: 64,
         PillHeight: 32,
         CardWidth: 300,
-        CardHeight: 188,
+        CardHeight: 170,
         PillCorner: 16,
         CardCorner: 26,
       };
@@ -68,7 +72,7 @@ export function metricsFor(
         PillWidth: 76,
         PillHeight: 38,
         CardWidth: 380,
-        CardHeight: 196,
+        CardHeight: 178,
         PillCorner: 19,
         CardCorner: 30,
       };
@@ -79,7 +83,7 @@ export function metricsFor(
         PillWidth: 68,
         PillHeight: 34,
         CardWidth: 336,
-        CardHeight: 188,
+        CardHeight: 170,
         PillCorner: 17,
         CardCorner: 28,
       };
@@ -90,7 +94,7 @@ function fromCustom(width: number): IslandMetrics {
   const w = Number.isFinite(width) ? Math.min(Math.max(width, 60), 96) : 68;
   const pillHeight = w / 2;
   const cardWidth = Math.min(Math.max(w * 4.9, 300), 420);
-  const cardHeight = Math.min(Math.max(cardWidth * 0.56, 188), 236);
+  const cardHeight = Math.min(Math.max(cardWidth * 0.5, 170), 210);
   return {
     PillWidth: w,
     PillHeight: pillHeight,

@@ -26,6 +26,7 @@ use windows::Media::Control::{
 use windows::Storage::Streams::{DataReader, IRandomAccessStream};
 
 use crate::log;
+use crate::lyrics::LyricsService;
 
 pub const EVENT_MEDIA_CHANGED: &str = "media://changed";
 
@@ -35,6 +36,10 @@ const ARTWORK_CACHE_LIMIT: usize = 8;
 const POLL_PLAYING_MS: u64 = 350;
 /// 暂停 / 无会话时的轮询间隔。
 const POLL_IDLE_MS: u64 = 1000;
+/// 控制指令后的高密度探测间隔。
+const POLL_FAST_MS: u64 = 80;
+/// 控制指令后的高密度探测窗口（毫秒）。
+const COMMAND_FAST_WINDOW_MS: f64 = 1200.0;
 
 type Session = GlobalSystemMediaTransportControlsSession;
 type Manager = GlobalSystemMediaTransportControlsSessionManager;
@@ -158,7 +163,7 @@ impl MediaService {
     }
 
     /// 启动媒体线程（应用装配时调用一次）。
-    pub fn start(&self, app: AppHandle) {
+    pub fn start(&self, app: AppHandle, lyrics: LyricsService) {
         let (tx, rx) = channel::<MediaCommand>();
         if let Ok(mut guard) = self.inner.commands.lock() {
             *guard = Some(tx);
@@ -167,7 +172,7 @@ impl MediaService {
         let current = self.inner.current.clone();
         std::thread::Builder::new()
             .name("winisland-media".into())
-            .spawn(move || run(app, current, rx))
+            .spawn(move || run(app, current, rx, lyrics))
             .ok();
     }
 }
@@ -176,6 +181,7 @@ fn run(
     app: AppHandle,
     current: Arc<Mutex<Option<MediaSnapshot>>>,
     rx: Receiver<MediaCommand>,
+    lyrics: LyricsService,
 ) {
     // MTA 套间：SMTC 的异步调用在这里阻塞等待完成
     unsafe {
@@ -189,6 +195,11 @@ fn run(
     let mut cache = ArtworkCache::new(ARTWORK_CACHE_LIMIT);
     let mut last_emitted: Option<MediaSnapshot> = None;
     let mut manager_retry_at = 0.0f64;
+    // 控制指令后的高密度探测窗口：SMTC 状态传播有延迟，指令后的第一次探测常读到旧状态，
+    // 若不密集追一段时间，暂停态要等满 1s 轮询周期前端才能见到新状态（按钮"延迟"的根因）。
+    let mut fast_until = 0.0f64;
+    // 最近一次请求过歌词的曲目键（换歌时重新请求）。
+    let mut last_lyrics_key = String::new();
 
     loop {
         let playing = current
@@ -197,19 +208,22 @@ fn run(
             .and_then(|guard| guard.as_ref().map(|s| s.is_playing))
             .unwrap_or(false);
 
-        let interval = Duration::from_millis(if playing {
+        let interval_ms = if now_ms() < fast_until {
+            POLL_FAST_MS
+        } else if playing {
             POLL_PLAYING_MS
         } else {
             POLL_IDLE_MS
-        });
+        };
 
-        match rx.recv_timeout(interval) {
+        match rx.recv_timeout(Duration::from_millis(interval_ms)) {
             Ok(command) => {
                 if manager.is_none() {
                     manager = request_manager(&mut manager_retry_at);
                 }
                 if let Some(manager) = manager.as_ref() {
                     apply_command(manager, command);
+                    fast_until = now_ms() + COMMAND_FAST_WINDOW_MS;
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
@@ -225,6 +239,20 @@ fn run(
         };
 
         let snapshot = probe(manager, &mut cache);
+
+        // 曲目变化（含首次出现媒体）时请求歌词；媒体消失则清空键，回来后重新请求。
+        // 歌词服务自带缓存与去重，结果经 lyrics://changed 推送。
+        match &snapshot {
+            Some(s) => {
+                let key = s.track_key();
+                if key != last_lyrics_key {
+                    last_lyrics_key = key;
+                    // 带上时长：歌词接口按「时长最接近」择优，避免选中现场版/翻唱条目
+                    lyrics.request(&s.title, &s.artist, &s.album_title, s.duration_ms);
+                }
+            }
+            None => last_lyrics_key.clear(),
+        }
 
         let should_emit = match (&snapshot, &last_emitted) {
             (None, None) => false,

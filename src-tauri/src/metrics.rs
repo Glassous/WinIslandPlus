@@ -38,7 +38,7 @@ impl IslandMetrics {
                 pill_width: 64.0,
                 pill_height: 32.0,
                 card_width: 300.0,
-                card_height: 188.0,
+                card_height: 170.0,
                 pill_corner: 16.0,
                 card_corner: 26.0,
             },
@@ -46,7 +46,7 @@ impl IslandMetrics {
                 pill_width: 76.0,
                 pill_height: 38.0,
                 card_width: 380.0,
-                card_height: 196.0,
+                card_height: 178.0,
                 pill_corner: 19.0,
                 card_corner: 30.0,
             },
@@ -55,7 +55,7 @@ impl IslandMetrics {
                 pill_width: 68.0,
                 pill_height: 34.0,
                 card_width: 336.0,
-                card_height: 188.0,
+                card_height: 170.0,
                 pill_corner: 17.0,
                 card_corner: 28.0,
             },
@@ -71,7 +71,7 @@ impl IslandMetrics {
 
         let pill_height = width / 2.0;
         let card_width = (width * 4.9).clamp(300.0, 420.0);
-        let card_height = (card_width * 0.56).clamp(188.0, 236.0);
+        let card_height = (card_width * 0.50).clamp(170.0, 210.0);
 
         Self {
             pill_width: width,

@@ -53,6 +53,23 @@
                 <div class="track-info">
                   <div class="title" id="titleText">未知曲目</div>
                   <div class="artist" id="artistText">未知艺术家</div>
+                  <!--
+                    歌词视口：两行高，上行是当前句（.is-current，内部再叠一层
+                    .lyric-fill 做「已唱到哪」的行内进度高亮），下行是下一句的弱化预览。
+                    换行时 .lyric-roll 整体上移一行 → 上下句上下滚动换位。
+                  -->
+                  <div class="lyric" id="lyricText" hidden>
+                    <div class="lyric-roll" id="lyricRoll">
+                      <div class="lyric-line is-current">
+                        <span class="lyric-base"></span>
+                        <span class="lyric-fill" aria-hidden="true"></span>
+                      </div>
+                      <div class="lyric-line">
+                        <span class="lyric-base"></span>
+                        <span class="lyric-fill" aria-hidden="true"></span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <div class="eq-bars" id="eqBars" aria-hidden="true">
@@ -73,13 +90,27 @@
               <div class="card-bottom">
                 <div class="card-row card-row-controls">
                   <div class="ctrl" id="prevButton" role="button" aria-label="上一首">
-                    <span class="glyph glyph-prev" aria-hidden="true">&#xE892;</span>
+                    <svg class="icon icon-prev" viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="5" y="5.5" width="3" height="13" rx="1.5" fill="#f2f2f7" />
+                      <path d="M18 7.2v9.6L9.6 12z" fill="#f2f2f7" stroke="#f2f2f7" stroke-width="2.4" stroke-linejoin="round" />
+                    </svg>
                   </div>
-                  <div class="ctrl" id="playButton" role="button" aria-label="播放/暂停">
-                    <span class="glyph glyph-play" id="playIcon" aria-hidden="true">&#xE768;</span>
+                  <div class="ctrl ctrl-play" id="playButton" role="button" aria-label="播放/暂停">
+                    <span class="play-icon-stack" id="playIcon">
+                      <svg class="icon icon-play" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M8.6 7.4v9.2L16.4 12z" fill="#ffffff" stroke="#ffffff" stroke-width="2.6" stroke-linejoin="round" />
+                      </svg>
+                      <svg class="icon icon-pause" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="7.4" y="6.5" width="3.6" height="11" rx="1.8" fill="#ffffff" />
+                        <rect x="13" y="6.5" width="3.6" height="11" rx="1.8" fill="#ffffff" />
+                      </svg>
+                    </span>
                   </div>
                   <div class="ctrl" id="nextButton" role="button" aria-label="下一首">
-                    <span class="glyph glyph-next" aria-hidden="true">&#xE893;</span>
+                    <svg class="icon icon-next" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M6 7.2v9.6L14.4 12z" fill="#f2f2f7" stroke="#f2f2f7" stroke-width="2.4" stroke-linejoin="round" />
+                      <rect x="16" y="5.5" width="3" height="13" rx="1.5" fill="#f2f2f7" />
+                    </svg>
                   </div>
                 </div>
               </div>

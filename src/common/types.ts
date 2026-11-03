@@ -80,6 +80,22 @@ export interface MediaSnapshot {
   AccentColorAlt: string | null;
 }
 
+/** 某首歌的歌词检索结果（后端在线检索后推送；无歌词时 Lrc / LrcHex 均为 null）。 */
+export interface LyricsSnapshot {
+  Title: string;
+  Artist: string;
+  AlbumTitle: string;
+  /** 原始 LRC 文本（带时间轴）；无歌词时为 null。 */
+  Lrc: string | null;
+  /**
+   * 本地歌词文件的原始字节（小写十六进制）。
+   * 本地文件编码混杂（UTF-8 / UTF-16 / GBK），由前端 `TextDecoder` 解码。
+   */
+  LrcHex: string | null;
+  /** 歌词来源（`lrclib` / `netease` / `local`），用于排查时间对不上的问题。 */
+  Origin: "lrclib" | "netease" | "local" | null;
+}
+
 /**
  * DeepSeek Harness 某一时刻的状态快照（不可变）。
  *
@@ -157,6 +173,7 @@ export const SETTINGS_LABEL = "settings";
 
 export const EVENTS = {
   mediaChanged: "media://changed",
+  lyricsChanged: "lyrics://changed",
   dshChanged: "dsh://changed",
   settingsChanged: "settings://changed",
   visibility: "island://visibility",

@@ -13,6 +13,7 @@ import type {
   IslandMetrics,
   IslandSettings,
   IslandSide,
+  LyricsSnapshot,
   MediaSnapshot,
   ShapeRect,
 } from "../common/types";
@@ -48,7 +49,11 @@ const dshCard = new DshCardView(dshActorEl);
 const glow = new CardGlow(document.getElementById("glowLayer")!);
 
 const mediaCard = new MediaCard(document.getElementById("mediaCard")!, {
-  onPlayPause: () => void api.togglePlayPause(),
+  onPlayPause: () => {
+    // 图标先乐观翻转（后端真实状态由快速轮询在百毫秒内送达并校正）
+    mediaCard.togglePlayingOptimistic();
+    void api.togglePlayPause();
+  },
   onPrevious: () => void api.previous(),
   onNext: () => void api.next(),
   onSeek: (fraction) => {
@@ -60,7 +65,9 @@ const mediaCard = new MediaCard(document.getElementById("mediaCard")!, {
     // 用户主动操作后 2 秒内不因"暂停"自动收起（由后端统一判断，这里只上报时间戳并刷新进度）
     void api.notifyUserActed();
     if (media && media.DurationMs > 0) {
-      mediaCard.setProgress(currentPosition(media), media.DurationMs);
+      const position = currentPosition(media);
+      mediaCard.setProgress(position, media.DurationMs);
+      mediaCard.tickLyrics(position);
     }
   },
 });
@@ -475,6 +482,10 @@ function bindEvents(): void {
     renderMedia(snapshot ?? null);
   });
 
+  on<LyricsSnapshot>(events.lyricsChanged, (payload) => {
+    mediaCard.setLyrics(payload);
+  });
+
   on<DshSnapshot | null>(events.dshChanged, (snapshot) => {
     dsh = snapshot ?? null;
     syncDshContent();
@@ -577,8 +588,12 @@ function startShapeHeartbeat(): void {
 
 function startProgressLoop(): void {
   window.setInterval(() => {
-    if (expanded !== "media" || !media || media.DurationMs <= 0) return;
-    mediaCard.setProgress(currentPosition(media), media.DurationMs);
+    if (!media || media.DurationMs <= 0) return;
+    const position = currentPosition(media);
+    // 歌词行不受展开限制：保证展开瞬间当前句已就位
+    mediaCard.tickLyrics(position);
+    if (expanded !== "media") return;
+    mediaCard.setProgress(position, media.DurationMs);
   }, 80);
 }
 
