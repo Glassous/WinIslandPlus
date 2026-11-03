@@ -192,6 +192,24 @@ export interface Bootstrap {
   ExecutablePath: string;
 }
 
+/**
+ * GitHub Releases 版本检测结论（`src-tauri/src/update.rs` 同名结构体）。
+ *
+ * 只在后台静默检测，不下载、不弹窗；`HasUpdate` 为 true 时设置窗口给出一个可点击的跳转。
+ */
+export interface UpdateStatus {
+  CurrentVersion: string;
+  /** 最新发布版本号（去掉 `v` 前缀）；尚未检测成功时为 null。 */
+  LatestVersion: string | null;
+  HasUpdate: boolean;
+  /** 新版本发布页；无更新时为 null。 */
+  ReleaseUrl: string | null;
+  /** 后台正在检测。 */
+  Checking: boolean;
+  /** 是否至少成功检测过一次（失败时保持 false，界面不做任何提示）。 */
+  Checked: boolean;
+}
+
 /** 展开态自动收起的原因。 */
 export type CollapseReason = "foreground" | "outside-click" | "idle";
 
@@ -208,4 +226,5 @@ export const EVENTS = {
   collapse: "island://collapse",
   expanded: "island://expanded",
   openSettings: "settings://open",
+  updateStatus: "update://status",
 } as const;

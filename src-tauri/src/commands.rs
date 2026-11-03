@@ -10,6 +10,7 @@ use crate::metrics::IslandMetrics;
 use crate::placement::ShapeRect;
 use crate::settings::IslandSettings;
 use crate::state::{self, SharedState};
+use crate::update::{self, UpdateStatus};
 use crate::window;
 use crate::{startup, tray};
 
@@ -213,6 +214,33 @@ pub fn set_startup_enabled(state: State<'_, SharedState>, enabled: bool) -> bool
     let ok = startup::set_enabled(enabled);
     if ok {
         state.settings.update(|settings| settings.auto_start = enabled);
+    }
+    ok
+}
+
+/// 更新检测结论：立即返回当前缓存，结果过期时顺手触发一次后台检测。
+#[tauri::command]
+pub fn update_status(app: AppHandle, state: State<'_, SharedState>) -> UpdateStatus {
+    let status = state.update.status();
+    state.update.refresh_if_stale(&app);
+    status
+}
+
+/// 打开新版本发布页：交给系统默认浏览器，应用内不下载、不弹窗。
+#[tauri::command]
+pub fn open_release_page(state: State<'_, SharedState>) -> bool {
+    let status = state.update.status();
+    let url = if status.has_update {
+        status
+            .release_url
+            .unwrap_or_else(|| update::RELEASES_URL.to_string())
+    } else {
+        update::RELEASES_URL.to_string()
+    };
+
+    let ok = crate::interop::open_url(&url);
+    if !ok {
+        log::warn(&format!("update: 打开发布页失败 {url}"));
     }
     ok
 }

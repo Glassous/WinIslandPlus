@@ -15,6 +15,7 @@ mod settings;
 mod startup;
 mod state;
 mod tray;
+mod update;
 mod window;
 
 use std::sync::Arc;
@@ -78,6 +79,9 @@ pub fn run() {
             tray::create(&handle, &setup_state);
             poller::start(handle.clone(), setup_state.clone());
 
+            // 后台静默检测新版本：只更新设置窗口里的一行文字，不打扰用户
+            setup_state.update.start(&handle);
+
             log::info("app: 启动完成");
             Ok(())
         })
@@ -118,6 +122,8 @@ pub fn run() {
             commands::set_startup_enabled,
             commands::open_settings_window,
             commands::toggle_island_visible,
+            commands::update_status,
+            commands::open_release_page,
             commands::quit_app,
             commands::frontend_log,
         ])

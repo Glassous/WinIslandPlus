@@ -4,6 +4,7 @@ import type {
   Bootstrap,
   IslandSettings,
   ShapeRect,
+  UpdateStatus,
 } from "./types";
 import { EVENTS } from "./types";
 
@@ -58,6 +59,12 @@ export const api = {
     call<{ X: number; Y: number; Down: boolean } | null>("cursor_probe"),
 
   toggleIslandVisible: () => call<boolean>("toggle_island_visible"),
+
+  /** 当前更新检测结论；结果过期时后端会顺手发起一次后台检测。 */
+  updateStatus: () => call<UpdateStatus>("update_status"),
+  /** 用系统默认浏览器打开发布页。 */
+  openReleasePage: () => call<boolean>("open_release_page"),
+
   quit: () => call<void>("quit_app"),
   log: (level: "info" | "warn" | "error", message: string) =>
     call<void>("frontend_log", { level, message }),

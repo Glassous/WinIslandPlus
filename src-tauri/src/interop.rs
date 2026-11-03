@@ -44,6 +44,7 @@ pub const HWND_TOPMOST: isize = -1;
 pub const HWND_NOTOPMOST: isize = -2;
 
 pub const SW_HIDE: i32 = 0;
+pub const SW_SHOWNORMAL: i32 = 1;
 pub const SW_SHOWNOACTIVATE: i32 = 4;
 
 pub const WM_ERASEBKGND: u32 = 0x0014;
@@ -196,6 +197,18 @@ extern "system" {
     pub fn DefSubclassProc(hwnd: Hwnd, msg: u32, wparam: usize, lparam: isize) -> isize;
 }
 
+#[link(name = "shell32")]
+extern "system" {
+    fn ShellExecuteW(
+        hwnd: Hwnd,
+        operation: *const u16,
+        file: *const u16,
+        parameters: *const u16,
+        directory: *const u16,
+        show: i32,
+    ) -> isize;
+}
+
 // ---------------- 安全包装 ----------------
 
 pub fn cursor_position() -> Option<(i32, i32)> {
@@ -238,4 +251,31 @@ pub fn client_rect(hwnd: Hwnd) -> Option<RECT> {
     } else {
         Some(rect)
     }
+}
+
+/// 用系统默认浏览器打开链接；只接受 https，避免被拼进来的任意命令。
+pub fn open_url(url: &str) -> bool {
+    if !url.starts_with("https://") {
+        return false;
+    }
+
+    let wide = to_wide(url);
+    let operation = to_wide("open");
+    let result = unsafe {
+        ShellExecuteW(
+            0,
+            operation.as_ptr(),
+            wide.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+
+    // ShellExecuteW 返回值 > 32 才算成功。
+    result > 32
+}
+
+fn to_wide(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(std::iter::once(0)).collect()
 }

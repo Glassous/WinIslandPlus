@@ -110,6 +110,32 @@ body.settings-body {
   display: flex;
 }
 
+/* 有新版本时把这一行点亮，其余状态保持中性灰 */
+.row-hint.is-update {
+  color: var(--accent);
+}
+
+/* 纯文字按钮：只用于「前往 GitHub」这类跳转，不抢视觉重量 */
+.link-button {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.link-button:active {
+  color: var(--accent-pressed);
+}
+
 .panel {
   display: flex;
   flex-direction: column;

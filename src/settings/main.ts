@@ -4,6 +4,7 @@ import type {
   IslandSizePreset,
   PillRightStyle,
   PlacementPreset,
+  UpdateStatus,
 } from "../common/types";
 import { ComboBox, Slider, ToggleSwitch } from "./controls";
 
@@ -35,6 +36,8 @@ const el = {
   idleCollapseDelayValue: document.getElementById("idleCollapseDelayValue")!,
   hint: document.getElementById("hintText")!,
   version: document.getElementById("versionText")!,
+  updateHint: document.getElementById("updateHint")!,
+  updateLink: document.getElementById("updateLink") as HTMLButtonElement,
   resetPosition: document.getElementById("resetPositionButton") as HTMLButtonElement,
   save: document.getElementById("saveButton") as HTMLButtonElement,
   cancel: document.getElementById("cancelButton") as HTMLButtonElement,
@@ -281,9 +284,56 @@ function buildControls(settings: IslandSettings): void {
   setIdlePanelEnabled(settings.IdleCollapse);
 }
 
+// ---------------- 版本更新 ----------------
+
+/**
+ * 更新提示只落在设置窗口的这一行里：没有任何弹窗、托盘提醒，也不会自动下载。
+ * 有新版本时给出一个跳转按钮，交给系统浏览器打开发布页。
+ */
+function renderUpdate(status: UpdateStatus): void {
+  const hasUpdate = status.HasUpdate && status.LatestVersion !== null;
+
+  el.updateLink.hidden = !hasUpdate;
+  if (hasUpdate) {
+    el.updateLink.textContent = "前往 GitHub";
+    el.updateLink.title = status.ReleaseUrl ?? "";
+  }
+
+  el.updateHint.classList.toggle("is-update", hasUpdate);
+
+  if (hasUpdate) {
+    el.updateHint.hidden = false;
+    el.updateHint.textContent = `发现新版本 ${status.LatestVersion}`;
+  } else if (status.Checking && !status.Checked) {
+    el.updateHint.hidden = false;
+    el.updateHint.textContent = "正在检查更新…";
+  } else if (status.Checked) {
+    el.updateHint.hidden = false;
+    el.updateHint.textContent = "已是最新版本";
+  } else {
+    // 从未检测成功（离线等）：什么都不显示
+    el.updateHint.hidden = true;
+    el.updateHint.textContent = "";
+  }
+}
+
+function bindUpdateLink(): void {
+  el.updateLink.addEventListener("click", () => {
+    void api.openReleasePage().then(
+      (ok) => {
+        if (!ok) void api.log("warn", "打开更新发布页失败");
+      },
+      (error) => void api.log("error", `打开更新发布页失败: ${String(error)}`),
+    );
+  });
+}
+
 // ---------------- 启动 ----------------
 
 async function init(): Promise<void> {
+  // 先订阅再查询：后台检测可能在查询返回前后完成，两种顺序都能拿到最终结论
+  on<UpdateStatus>(events.updateStatus, renderUpdate);
+
   const [settings, startupEnabled, info] = await Promise.all([
     api.getSettings(),
     api.getStartupEnabled(),
@@ -299,6 +349,13 @@ async function init(): Promise<void> {
   buildControls(settings);
 
   el.version.textContent = `版本 ${info.Version}  ·  ${info.ExecutablePath}`;
+
+  bindUpdateLink();
+
+  // 更新状态独立获取：检测本身出问题不该影响设置窗口的其它功能
+  void api.updateStatus().then(renderUpdate, (error) => {
+    void api.log("warn", `更新状态获取失败: ${String(error)}`);
+  });
 
   // 岛体拖动会直接写回配置里的位置字段：持续把最新位置合并进工作副本
   on<IslandSettings>(events.settingsChanged, (current) => {

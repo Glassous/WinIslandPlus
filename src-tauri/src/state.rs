@@ -13,6 +13,7 @@ use crate::media::MediaService;
 use crate::metrics::IslandMetrics;
 use crate::placement::{self, Anchor, ShapeRect, WorkArea};
 use crate::settings::SettingsService;
+use crate::update::UpdateService;
 use crate::window;
 
 pub const EVENT_SETTINGS_CHANGED: &str = "settings://changed";
@@ -98,6 +99,8 @@ pub struct Shared {
     pub settings: SettingsService,
     pub media: MediaService,
     pub dsh: DshService,
+    /// GitHub Releases 静默更新检测。
+    pub update: UpdateService,
     pub runtime: Mutex<Runtime>,
     pub hwnd: Mutex<Hwnd>,
     pub shutdown: AtomicBool,
@@ -111,6 +114,7 @@ impl Shared {
             settings,
             media,
             dsh,
+            update: UpdateService::new(),
             runtime: Mutex::new(Runtime::default()),
             hwnd: Mutex::new(0),
             shutdown: AtomicBool::new(false),
