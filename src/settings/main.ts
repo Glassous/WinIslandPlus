@@ -1,5 +1,10 @@
 import { api, events, on } from "../common/ipc";
-import type { IslandSettings, IslandSizePreset, PlacementPreset } from "../common/types";
+import type {
+  IslandSettings,
+  IslandSizePreset,
+  PillRightStyle,
+  PlacementPreset,
+} from "../common/types";
 import { ComboBox, Slider, ToggleSwitch } from "./controls";
 
 const SIZE_OPTIONS = [
@@ -7,6 +12,12 @@ const SIZE_OPTIONS = [
   { value: "Medium", label: "中（默认）" },
   { value: "Large", label: "大" },
   { value: "Custom", label: "自定义" },
+];
+
+const RIGHT_STYLE_OPTIONS = [
+  { value: "Spectrum", label: "频谱（默认）" },
+  { value: "ProgressRing", label: "进度圈" },
+  { value: "Lyrics", label: "歌词" },
 ];
 
 const PLACEMENT_OPTIONS = [
@@ -39,6 +50,7 @@ let placementTouched = false;
 let syncing = false;
 
 let sizeCombo: ComboBox;
+let rightStyleCombo: ComboBox;
 let placementCombo: ComboBox;
 let widthSlider: Slider;
 let idleSlider: Slider;
@@ -166,6 +178,16 @@ function buildControls(settings: IslandSettings): void {
       working.AnchorXRatio = 0.5;
       working.AnchorYRatio = 0;
     }
+    void preview();
+  });
+
+  rightStyleCombo = new ComboBox(
+    document.getElementById("rightStyleCombo")!,
+    RIGHT_STYLE_OPTIONS,
+    settings.PillRightStyle,
+  );
+  rightStyleCombo.bindOnChange((value) => {
+    working.PillRightStyle = value as PillRightStyle;
     void preview();
   });
 

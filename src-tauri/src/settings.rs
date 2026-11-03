@@ -23,6 +23,18 @@ pub enum PlacementPreset {
     Custom,
 }
 
+/// 胶囊右侧显示什么：三者互斥，只生效一个。
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PillRightStyle {
+    /// 跳动频谱（默认）。
+    #[default]
+    Spectrum,
+    /// 播放进度圈。
+    ProgressRing,
+    /// 当前一句歌词（胶囊宽度按文字长度向右伸展）。
+    Lyrics,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct IslandSettings {
@@ -42,6 +54,9 @@ pub struct IslandSettings {
     pub custom_pill_width: f64,
     pub custom_pill_height: f64,
     pub persistent: bool,
+    /// 胶囊右侧样式（频谱 / 进度圈 / 歌词），旧配置缺字段时为频谱。
+    #[serde(default)]
+    pub pill_right_style: PillRightStyle,
     pub auto_start: bool,
     pub auto_collapse_on_pause: bool,
     pub idle_collapse: bool,
@@ -70,6 +85,7 @@ impl Default for IslandSettings {
             custom_pill_width: 68.0,
             custom_pill_height: 34.0,
             persistent: false,
+            pill_right_style: PillRightStyle::Spectrum,
             auto_start: false,
             auto_collapse_on_pause: true,
             idle_collapse: true,

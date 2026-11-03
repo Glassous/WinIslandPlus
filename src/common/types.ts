@@ -15,6 +15,11 @@ export type PlacementPreset =
 export type IslandSizePreset = "Small" | "Medium" | "Large" | "Custom";
 
 /**
+ * 胶囊右侧显示什么：三种样式互斥，同一时刻只有一个生效（`src-tauri/src/settings.rs` 同名枚举）。
+ */
+export type PillRightStyle = "Spectrum" | "ProgressRing" | "Lyrics";
+
+/**
  * DeepSeek Harness 的执行阶段。
  * 由状态文件写入方给出；未知取值前端按 `idle` 处理。
  */
@@ -38,6 +43,8 @@ export interface IslandSettings {
   CustomPillWidth: number;
   CustomPillHeight: number;
   Persistent: boolean;
+  /** 胶囊右侧样式（默认 `Spectrum`）。 */
+  PillRightStyle: PillRightStyle;
   AutoStart: boolean;
   AutoCollapseOnPause: boolean;
   IdleCollapse: boolean;
@@ -112,8 +119,8 @@ export interface LyricsSnapshot {
    * 本地文件编码混杂（UTF-8 / UTF-16 / GBK），由前端 `TextDecoder` 解码。
    */
   LrcHex: string | null;
-  /** 歌词来源（`lrclib` / `netease` / `local`），用于排查时间对不上的问题。 */
-  Origin: "lrclib" | "netease" | "local" | null;
+  /** 歌词来源（`qq` / `netease` / `local`），用于排查时间对不上的问题。 */
+  Origin: "qq" | "netease" | "local" | null;
 }
 
 /**

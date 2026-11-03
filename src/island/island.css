@@ -274,6 +274,126 @@ body.island-body {
   margin: 0 auto;
 }
 
+/* ---------------- 胶囊右侧样式（频谱 / 进度圈 / 歌词，三选一） ---------------- */
+
+/*
+ * 三者互斥：媒体岛面带 side-spectrum / side-ring / side-lyrics 类，由 CSS 决定谁可见
+ * （不用 inline style，避免和 .circle / .empty 的规则互相打架）。
+ */
+.pill-ring,
+.pill-lyric {
+  display: none;
+}
+
+.media-actor.side-spectrum .pill-ring,
+.media-actor.side-spectrum .pill-lyric,
+.media-actor.side-ring .pill-bars,
+.media-actor.side-lyrics .pill-bars {
+  display: none;
+}
+
+/* 进度圈：18×18，从 12 点方向起顺时针走满一圈 */
+.pill-ring {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+}
+
+.media-actor.side-ring .pill-ring {
+  display: block;
+}
+
+.pill-ring svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.pill-ring-track,
+.pill-ring-fill {
+  fill: none;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+}
+
+.pill-ring-track {
+  stroke: rgba(255, 255, 255, 0.16);
+}
+
+.pill-ring-fill {
+  stroke: #f2f2f7;
+  /* pathLength=100 → 进度直接就是 dashoffset 的百分比 */
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  transition: stroke-dashoffset 180ms linear;
+}
+
+/*
+ * 歌词：单行不换行。胶囊宽度由 JS 按这句歌词的自然宽度解算（只会向右生长），
+ * 文字比胶囊宽的那一瞬间由 .actor 的 overflow: hidden 裁掉右侧——
+ * 看起来就像文字随胶囊一起「展开」出来。
+ */
+.pill-lyric {
+  position: relative;
+  z-index: 1;
+  flex: 0 1 auto;
+  min-width: 0;
+  /* 与封面之间再让出一点呼吸（.media-pill 的 gap 是 5px） */
+  margin-left: 4px;
+  overflow: hidden;
+  font-family: "Segoe UI Variable Display", "Microsoft YaHei UI", sans-serif;
+  font-size: 11px;
+  line-height: 1;
+  color: #e6e6ec;
+  white-space: nowrap;
+}
+
+.media-actor.side-lyrics .pill-lyric {
+  display: block;
+}
+
+.pill-lyric-text {
+  display: block;
+  white-space: nowrap;
+}
+
+/*
+ * 整句长到超过胶囊行宽度时（胶囊右沿最多伸到行尾），右侧做 12px 渐隐：
+ * 读起来像「还有下文」，而不是被硬切掉——只在真的被截断时才加。
+ */
+.media-actor.truncated .pill-lyric {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 12px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 12px), transparent);
+}
+
+/*
+ * 兜底：没有媒体（常驻模式）时三样都收掉——
+ * 这条必须排在「显示」规则之后，否则会被同权重的 side-* 规则盖掉。
+ */
+.media-actor.empty .pill-bars,
+.media-actor.empty .pill-ring,
+.media-actor.empty .pill-lyric {
+  display: none;
+}
+
+/*
+ * 测量自然宽度：绝对定位 + width: max-content，量出来的正是
+ * 「封面 + 间距 + 整句歌词」的宽度。必须脱离 flex 流，
+ * 否则会被胶囊当前宽度夹住（与 .pill-dsh.measuring 同一套做法）。
+ */
+.media-pill.measuring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: max-content;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /*
  * 两个岛并存时媒体收成正圆：直径等于胶囊高度。
  *
@@ -296,6 +416,23 @@ body.island-body {
 
 .media-actor.circle.has-art .pill-bars {
   display: none;
+}
+
+/*
+ * 正圆形态没有「右侧」可言：进度圈与歌词都不出现（圆内只有专辑图 / 频谱）。
+ * 后两条带上 side-* 类是为了在权重上压过「显示」规则（.media-actor.side-ring .pill-ring）。
+ */
+.media-actor.circle .pill-ring,
+.media-actor.circle .pill-lyric,
+.media-actor.circle.side-ring .pill-ring,
+.media-actor.circle.side-lyrics .pill-lyric {
+  display: none;
+}
+
+/* 圆里没有专辑图时仍然用频谱填满，避免选了进度圈 / 歌词后圆里空着 */
+.media-actor.circle.side-ring:not(.has-art) .pill-bars,
+.media-actor.circle.side-lyrics:not(.has-art) .pill-bars {
+  display: flex;
 }
 
 .bar {

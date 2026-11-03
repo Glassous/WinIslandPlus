@@ -186,13 +186,17 @@ impl Shared {
         let snapshot = self.snapshot();
         let scale = snapshot.scale;
 
-        let window_width = (snapshot.metrics.card_width * scale).round().max(1.0) as i32;
+        // 卡片区（可见形状的基准区域）与窗口宽度分开算：
+        // 窗口右侧还留了一条透明预留区，供「胶囊歌词」样式向右伸展，不出窗口不被裁。
+        let card_width = (snapshot.metrics.card_width * scale).round().max(1.0) as i32;
+        let window_width = (snapshot.metrics.window_width() * scale).round().max(1.0) as i32;
         // 高度恒定：展开的卡片长在胶囊行的下一行，窗口本身不改尺寸
         let window_height = (snapshot.metrics.window_height() * scale)
             .round()
             .max(1.0) as i32;
 
-        let mut x = (snapshot.anchor.center_x - window_width as f64 / 2.0).round() as i32;
+        // 以卡片（而不是整个窗口）居中：预留区只向右探，岛体的视觉位置与改动前完全一致
+        let mut x = (snapshot.anchor.center_x - card_width as f64 / 2.0).round() as i32;
         let mut y = if snapshot.bottom_anchored {
             (snapshot.anchor.edge_y - window_height as f64).round() as i32
         } else {
@@ -200,7 +204,8 @@ impl Shared {
         };
 
         let work = snapshot.work;
-        x = x.clamp(work.left, (work.right() - window_width).max(work.left));
+        // 只保证卡片在屏幕内；右侧预留区可以探出屏幕（那里没有可见内容）
+        x = x.clamp(work.left, (work.right() - card_width).max(work.left));
         y = y.clamp(work.top, (work.bottom() - window_height).max(work.top));
 
         let (frame_left, frame_top, frame_width, frame_height) = window::frame_thickness(hwnd);

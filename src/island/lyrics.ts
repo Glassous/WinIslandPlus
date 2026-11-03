@@ -29,6 +29,13 @@ export interface LyricLine {
 const TIME_TAG = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
 const WORD_TAG = /<(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?>/g;
 const OFFSET_TAG = /\[offset:\s*([+-]?\d+)\s*\]/i;
+/**
+ * 制作信息行：QQ 音乐 / 网易云的歌词开头常带一串 `词：方文山`、`制作人 : Steve Mac`、
+ * `编曲：林迈可`。它们有时间轴却不是歌词——不滤掉的话，前奏十几秒里卡片与胶囊
+ * 会一直显示这些信息，看起来就像「歌词对不上」。整行当作空句（间奏）处理。
+ */
+const CREDIT_LINE =
+  /^\s*(作词|作曲|编曲|词曲|词|曲|制作人|监制|统筹|企划|策划|宣发|发行|出品|原唱|演唱|混音|母带|录音|配唱|和声|吉他|贝斯|鼓|键盘|弦乐|人声|音乐总监|制作统筹|混音师|母带师|录音师|OP|SP|Lyrics|Composed|Arranged|Produced|Written|Mixed|Mastered)\s*(?:by\s*)?[:：]/i;
 /** 汉字 / 全角 / 假名 / 韩文按整宽算，其余按半宽，用来近似文本的实际渲染宽度。 */
 const WIDE_CHAR = /[\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]/;
 
@@ -41,9 +48,11 @@ const HOLD_MS = 6_000;
  * - 支持一行多个时间标签（`[a][b]同一句`），每个标签展开成独立行；
  * - 支持 `[offset:±ms]`：正值让歌词整体提前；
  * - `[ti:]` / `[ar:]` 等元数据标签不含时间戳，自然被跳过；
+ * - 制作信息行（`词：`、`编曲：`…）按空句丢掉；
+ * - 传了 `trackTitle` 时，还会丢掉开头那行「歌名 - 歌手」式的头部信息；
  * - `durationMs` 已知时用于兜底最后一句的结束时间。
  */
-export function parseLrc(lrc: string, durationMs = 0): LyricLine[] {
+export function parseLrc(lrc: string, durationMs = 0, trackTitle = ""): LyricLine[] {
   const offsetMatch = OFFSET_TAG.exec(lrc);
   const offset = offsetMatch ? Number(offsetMatch[1]) : 0;
 
@@ -63,6 +72,8 @@ export function parseLrc(lrc: string, durationMs = 0): LyricLine[] {
     if (stamps.length === 0) continue;
 
     const { text, words } = parseWords(raw.slice(lastIndex), stamps[0]);
+    // 制作信息（词：/ 曲：/ 制作人：…）不是歌词：按空句处理，交给下面的空行折叠吃掉
+    const content = CREDIT_LINE.test(text) ? "" : text;
     const shiftedWords =
       words && stamps.length === 1
         ? words.map((word) => ({
@@ -74,8 +85,8 @@ export function parseLrc(lrc: string, durationMs = 0): LyricLine[] {
 
     for (const stamp of stamps) {
       const startMs = Math.max(0, stamp - offset);
-      const line: LyricLine = { startMs, endMs: startMs, text };
-      if (shiftedWords) line.words = shiftedWords;
+      const line: LyricLine = { startMs, endMs: startMs, text: content };
+      if (shiftedWords && content.length > 0) line.words = shiftedWords;
       lines.push(line);
     }
   }
@@ -94,6 +105,12 @@ export function parseLrc(lrc: string, durationMs = 0): LyricLine[] {
     compact.pop();
   }
   if (compact.length === 0) return [];
+
+  // QQ / 网易云的歌词常在 0 秒处放一行「歌名 - 歌手 (English)」：它不是歌词，去掉
+  if (compact[0].text.length > 0 && isHeaderLine(compact[0].text, trackTitle)) {
+    compact.shift();
+    if (compact.length === 0) return [];
+  }
 
   // 每句的结束时间 = 下一句的开始；最后一句用曲目时长兜底
   for (let index = 0; index < compact.length; index++) {
@@ -293,6 +310,29 @@ function textWeight(text: string): number {
     weight += WIDE_CHAR.test(char) ? 1 : 0.55;
   }
   return weight;
+}
+
+/**
+ * 是否是歌词开头的「头部信息行」：形如 `歌名 - 歌手`、`歌名 (English Title)`。
+ *
+ * 判定刻意收紧：必须以曲名开头，并且带破折号或括号修饰——
+ * 普通歌词里不会出现这种形态，误杀风险很低。
+ */
+function isHeaderLine(text: string, trackTitle: string): boolean {
+  const want = normalizeForCompare(trackTitle);
+  if (want.length === 0) return false;
+
+  const got = normalizeForCompare(text);
+  if (!got.startsWith(want)) return false;
+
+  return /[-–—(（\[]/.test(text) && got.length > want.length;
+}
+
+/** 比对用的归一：只留字母数字（含汉字）并转小写。 */
+function normalizeForCompare(text: string): string {
+  return Array.from(text.toLowerCase())
+    .filter((char) => /[\p{L}\p{N}]/u.test(char))
+    .join("");
 }
 
 function lastLineEnd(line: LyricLine, durationMs: number): number {

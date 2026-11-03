@@ -3,21 +3,23 @@
 //! 独占一个线程跑阻塞式 HTTP（不占用媒体线程的轮询）；结果做内存缓存，
 //! 无论是否找到歌词都会发出 `lyrics://changed`，由前端决定回退展示。
 //!
-//! 来源顺序：lrclib.net 开放接口 → 网易云音乐 web 接口 → 本地歌词文件兜底。
+//! 来源顺序：QQ 音乐 → 网易云音乐 → 本地歌词文件。
+//! （中文曲目上 QQ 音乐的命中率与响应速度都明显好于 lrclib，因此由它打头。）
 //!
-//! 检索策略（「歌词经常找不到」的根因基本都在这里）：
+//! 检索策略：
 //! - 播放器给出的标题常带修饰：`(Live)`、`- Remastered 2011`、`feat. xxx`、`【高音质】`，
 //!   原样拿去搜几乎必然搜不到 → 先归一成「干净曲名 + 主歌手」，再按多组候选依次查；
-//! - 同一首歌常有专辑版 / 现场版 / 翻唱多个条目，先用时长严格择优选；
-//!   都不合适时再放宽时长（曲名、歌手仍然要对得上）捞一个近似版本，而不是直接判失败；
+//! - 同一首歌常有专辑版 / 现场版 / 翻唱多个条目，按「曲名 + 歌手 + 时长」打分择优选，
+//!   时长差太多的版本会被丢掉（否则整首歌的歌词都会偏）；
 //! - 「网络失败」与「确实没有歌词」分开对待：前者马上放弃网络改走本地文件，
-//!   后者落地短期负缓存，并在稍后自动重试几次；
-//! - 排队只保留最新一条请求：切歌很快时，旧请求不会占住线程让新歌迟迟等不到歌词。
+//!   后者落地短期负缓存，并在稍后自动重试；
+//! - 队列用阻塞 `recv()` 取，**一条都不会丢**：切歌很快时旧请求会因曲目键过期而被跳过，
+//!   但最新那条一定会在队列里被处理。
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -40,21 +42,18 @@ const MAX_RETRIES: u32 = 2;
 /// 单次 HTTP 请求超时。
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(4);
 /// 一次完整检索的时间预算，防止在断网 / 慢接口上耗掉太久。
-const FETCH_BUDGET_MS: f64 = 12_000.0;
-/// 单次检索最多发出的 HTTP 请求数。
-const MAX_HTTP_CALLS: usize = 8;
-/// 严格匹配：候选条目与当前曲目的时长最大容差（毫秒），超出就认为不是同一版本。
-const STRICT_TOLERANCE_MS: f64 = 8_000.0;
-/// 宽松匹配：曲名 / 歌手确认一致时，允许更大的时长差（用于时长标注不准的接口）。
-const LOOSE_TOLERANCE_MS: f64 = 30_000.0;
+const FETCH_BUDGET_MS: f64 = 10_000.0;
+/// 单次检索最多发出的 HTTP 请求数（搜索 + 取词各一次，两个来源足够）。
+const MAX_HTTP_CALLS: usize = 4;
+/// 候选条目与当前曲目的时长最大容差（毫秒），超出就认为不是同一版本（现场版 / 翻唱）。
+const DURATION_TOLERANCE_MS: f64 = 30_000.0;
 /// 曲名相似度低于这个值就不认（避免拿完全不相干的条目凑数）。
 const MIN_TITLE_SCORE: i32 = 55;
-/// 宽松匹配要求的曲名相似度。
-const MIN_LOOSE_TITLE_SCORE: i32 = 85;
 /// 本地歌词文件的后缀（大小写不敏感）。
 const LOCAL_EXTENSIONS: [&str; 2] = ["lrc", "txt"];
 
-const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) WinIslandPlus/1.1";
+const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+     (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 WinIslandPlus/1.1";
 
 /// 曲名 / 歌手里的「修饰词」：带这些字样的括号段、破折号尾巴一律剥掉再搜。
 const DECORATIONS: [&str; 56] = [
@@ -120,7 +119,7 @@ const DECORATIONS: [&str; 56] = [
 #[derive(Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum LyricsOrigin {
-    Lrclib,
+    Qq,
     Netease,
     Local,
 }
@@ -128,7 +127,7 @@ pub enum LyricsOrigin {
 impl LyricsOrigin {
     fn label(self) -> &'static str {
         match self {
-            Self::Lrclib => "lrclib",
+            Self::Qq => "qq",
             Self::Netease => "netease",
             Self::Local => "local",
         }
@@ -180,10 +179,20 @@ enum LyricsCommand {
     Request(LyricsRequest),
 }
 
+impl LyricsCommand {
+    fn into_request(self) -> LyricsRequest {
+        match self {
+            Self::Request(request) => request,
+        }
+    }
+}
+
 struct Inner {
     commands: Mutex<Option<Sender<LyricsCommand>>>,
     /// 最新请求的曲目键：网络往返期间用户可能已经切歌，回来时据此丢弃过期结果。
     latest: Mutex<Option<String>>,
+    /// 最近一次真正推送出结果的曲目键：媒体线程据此判断「请求是不是丢了」，必要时重发。
+    delivered: Mutex<Option<String>>,
 }
 
 /// 歌词服务句柄（clone 廉价）。
@@ -198,6 +207,7 @@ impl LyricsService {
             inner: Arc::new(Inner {
                 commands: Mutex::new(None),
                 latest: Mutex::new(None),
+                delivered: Mutex::new(None),
             }),
         }
     }
@@ -219,11 +229,30 @@ impl LyricsService {
         if let Ok(mut guard) = self.inner.latest.lock() {
             *guard = Some(key);
         }
-        if let Ok(guard) = self.inner.commands.lock() {
-            if let Some(tx) = guard.as_ref() {
-                let _ = tx.send(command);
+
+        match self.inner.commands.lock() {
+            Ok(guard) => {
+                if let Some(tx) = guard.as_ref() {
+                    let sent = tx.send(command).is_ok();
+                    log::info(&format!(
+                        "lyrics: 收到检索请求{}",
+                        if sent { "" } else { "（歌词线程已退出）" }
+                    ));
+                } else {
+                    log::warn("lyrics: 歌词线程尚未启动，请求被丢弃");
+                }
             }
+            Err(_) => log::warn("lyrics: 请求通道不可用"),
         }
+    }
+
+    /// 最近一次推送出结果的曲目键（供媒体线程判断请求是否丢失）。
+    pub fn delivered_key(&self) -> Option<String> {
+        self.inner
+            .delivered
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     /// 启动歌词线程（应用装配时调用一次）。
@@ -243,132 +272,113 @@ impl LyricsService {
 
 fn run(app: AppHandle, rx: Receiver<LyricsCommand>, inner: Arc<Inner>) {
     let mut cache = LyricsCache::new(CACHE_LIMIT);
-    // 待处理：队列里只保留最新一条（旧请求随切歌失去意义）
-    let mut pending: Option<LyricsRequest> = None;
-    // 未找到时的自动重试（只保留当前曲目的一条）
-    let mut retry: Option<(f64, LyricsRequest)> = None;
 
-    log::info(&format!(
-        "lyrics: 本地歌词目录 {}",
-        lyrics_dir().display()
-    ));
+    log::info(&format!("lyrics: 本地歌词目录 {}", lyrics_dir().display()));
 
-    loop {
-        // 1) 清空队列，只保留最新请求；换了曲目就丢掉旧曲目的重试计划
+    // 阻塞取请求：任何一条请求都不会被丢掉，最新的那条一定会在队列里等到处理。
+    while let Ok(command) = rx.recv() {
+        let mut request = command.into_request();
+
         loop {
-            match rx.try_recv() {
-                Ok(LyricsCommand::Request(request)) => {
-                    if retry
-                        .as_ref()
-                        .map(|(_, waiting)| waiting.key != request.key)
-                        .unwrap_or(false)
-                    {
-                        retry = None;
-                    }
-                    pending = Some(request);
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break,
+            // 期间已经切到别的歌：这条结果没人要了（新请求还在队列里排队）
+            if superseded(&inner, &request.key) {
+                break;
             }
-        }
 
-        // 2) 没有新请求时，看看有没有到点的重试
-        if pending.is_none() {
-            if let Some((at, request)) = retry.take() {
-                if now_ms() >= at {
-                    pending = Some(request);
-                } else {
-                    retry = Some((at, request));
-                }
-            }
-        }
+            let Some(retry_after) = handle(&app, &mut cache, &inner, &request) else {
+                break;
+            };
 
-        // 3) 没活干就等：有重试计划时睡到那个时刻，否则阻塞等新请求
-        let Some(request) = pending.take() else {
-            let wait_ms = retry
-                .as_ref()
-                .map(|(at, _)| (*at - now_ms()).max(1.0))
-                .unwrap_or(3_600_000.0);
-
-            match rx.recv_timeout(Duration::from_millis(wait_ms as u64)) {
-                Ok(LyricsCommand::Request(request)) => pending = Some(request),
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => {
-                    if pending.is_none() {
+            // 没找到：等一会儿再试；等待期间来了新请求就优先处理新歌
+            match rx.recv_timeout(retry_after) {
+                Ok(command) => request = command.into_request(),
+                Err(RecvTimeoutError::Timeout) => {
+                    if request.attempt >= MAX_RETRIES {
                         break;
                     }
+                    request.attempt += 1;
                 }
+                Err(RecvTimeoutError::Disconnected) => return,
             }
-            continue;
-        };
-
-        // 4) 拉取：缓存命中直接用；重试时绕过负缓存，避免刚失败就又被缓存挡回去
-        let cached = if request.attempt == 0 {
-            cache.get(&request.key)
-        } else {
-            None
-        };
-
-        let hit = match cached {
-            Some(hit) => hit,
-            None => {
-                let fetched = fetch_lyrics(&request.title, &request.artist, request.duration_ms);
-                cache.put(request.key.clone(), fetched.clone());
-                fetched
-            }
-        };
-
-        let missing = hit.is_none();
-        match hit.as_ref() {
-            Some(found) => log::info(&format!("lyrics: 命中 {} 歌词", found.origin.label())),
-            None => log::info("lyrics: 未找到可用歌词"),
-        }
-
-        // 期间又切了歌：这次结果没人要，别推给前端（它会因为曲目键不匹配而丢弃）
-        let superseded = inner
-            .latest
-            .lock()
-            .map(|latest| latest.as_deref() != Some(request.key.as_str()))
-            .unwrap_or(false);
-        if superseded {
-            continue;
-        }
-
-        let mut lrc: Option<String> = None;
-        let mut lrc_hex: Option<String> = None;
-        let mut origin: Option<LyricsOrigin> = None;
-
-        if let Some(found) = hit {
-            origin = Some(found.origin);
-            match found.body {
-                LyricsBody::Text(text) => lrc = Some(text),
-                LyricsBody::Bytes(bytes) => lrc_hex = Some(to_hex(&bytes)),
-            }
-        }
-
-        let _ = app.emit(
-            EVENT_LYRICS_CHANGED,
-            LyricsPayload {
-                title: request.title.clone(),
-                artist: request.artist.clone(),
-                album_title: request.album_title.clone(),
-                lrc,
-                lrc_hex,
-                origin,
-            },
-        );
-
-        // 5) 没找到：安排一次延后重试（网络抖动、接口临时失败都很常见）
-        if missing && request.attempt < MAX_RETRIES {
-            let delay = RETRY_DELAY_MS * (request.attempt as f64 + 1.0);
-            let mut next = request;
-            next.attempt += 1;
-            retry = Some((now_ms() + delay, next));
-            log::info(&format!("lyrics: {} 秒后重试检索", (delay / 1_000.0) as i64));
         }
     }
 
     log::info("lyrics: 歌词线程退出");
+}
+
+/// 处理一次检索：返回 Some(等待时长) 表示没找到、稍后重试。
+fn handle(
+    app: &AppHandle,
+    cache: &mut LyricsCache,
+    inner: &Arc<Inner>,
+    request: &LyricsRequest,
+) -> Option<Duration> {
+    // 重试时绕过负缓存，避免刚失败就又被缓存挡回去
+    let cached = if request.attempt == 0 {
+        cache.get(&request.key)
+    } else {
+        None
+    };
+
+    let hit = match cached {
+        Some(hit) => hit,
+        None => {
+            log::info(&format!("lyrics: 开始检索（第 {} 次）", request.attempt + 1));
+            let fetched = fetch_lyrics(&request.title, &request.artist, request.duration_ms);
+            cache.put(request.key.clone(), fetched.clone());
+            fetched
+        }
+    };
+
+    match hit.as_ref() {
+        Some(found) => log::info(&format!("lyrics: 命中 {} 歌词", found.origin.label())),
+        None => log::info("lyrics: 未找到可用歌词"),
+    }
+
+    if superseded(inner, &request.key) {
+        return None;
+    }
+
+    let (lrc, lrc_hex, origin) = match hit.as_ref() {
+        Some(found) => match &found.body {
+            LyricsBody::Text(text) => (Some(text.clone()), None, Some(found.origin)),
+            LyricsBody::Bytes(bytes) => (None, Some(to_hex(bytes)), Some(found.origin)),
+        },
+        None => (None, None, None),
+    };
+
+    if let Ok(mut guard) = inner.delivered.lock() {
+        *guard = Some(request.key.clone());
+    }
+
+    let _ = app.emit(
+        EVENT_LYRICS_CHANGED,
+        LyricsPayload {
+            title: request.title.clone(),
+            artist: request.artist.clone(),
+            album_title: request.album_title.clone(),
+            lrc,
+            lrc_hex,
+            origin,
+        },
+    );
+
+    if hit.is_none() && request.attempt < MAX_RETRIES {
+        let delay = RETRY_DELAY_MS * (request.attempt as f64 + 1.0);
+        log::info(&format!("lyrics: {} 秒后重试检索", (delay / 1_000.0) as i64));
+        return Some(Duration::from_millis(delay as u64));
+    }
+
+    None
+}
+
+/// 该曲目键是否已经被更新的请求取代（结果没人要了）。
+fn superseded(inner: &Arc<Inner>, key: &str) -> bool {
+    inner
+        .latest
+        .lock()
+        .map(|latest| latest.as_deref() != Some(key))
+        .unwrap_or(false)
 }
 
 // ---------------- 检索编排 ----------------
@@ -414,45 +424,25 @@ fn fetch_lyrics(title: &str, artist: &str, duration_ms: f64) -> Option<LyricsHit
     let queries = query_candidates(title, artist);
     let mut budget = Budget::new();
 
-    // 第一轮：严格匹配（时长差别太大的现场版 / 翻唱会被丢掉）
-    for query in &queries {
+    // 第一轮：QQ 音乐（中文曲目命中率最高、响应最快）
+    for query in queries.iter().take(2) {
         if !budget.take() {
             break;
         }
-        match lrclib_search(query, duration_ms, &STRICT_RULES) {
+        match qq_search(query, duration_ms) {
             Ok(Some(hit)) => {
-                log::info("lyrics: lrclib 严格匹配命中");
+                log::info("lyrics: qq 命中");
                 return Some(hit);
             }
             Ok(None) => {}
             Err(error) => {
-                log::warn(&format!("lyrics: lrclib 检索失败（{}）", error.label()));
+                log::warn(&format!("lyrics: qq 检索失败（{}）", error.label()));
                 budget.note(&error);
             }
         }
     }
 
-    // 第二轮：放宽时长但不放宽曲名——接口里的时长标注经常不准，直接判失败太苛刻
-    if duration_ms > 0.0 && budget.available() {
-        for query in queries.iter().take(2) {
-            if !budget.take() {
-                break;
-            }
-            match lrclib_search(query, duration_ms, &LOOSE_RULES) {
-                Ok(Some(hit)) => {
-                    log::info("lyrics: lrclib 近似版本命中（时长有出入）");
-                    return Some(hit);
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    log::warn(&format!("lyrics: lrclib 检索失败（{}）", error.label()));
-                    budget.note(&error);
-                }
-            }
-        }
-    }
-
-    // 第三轮：网易云兜底
+    // 第二轮：网易云音乐兜底
     if budget.available() {
         for query in queries.iter().take(2) {
             if !budget.take() {
@@ -472,7 +462,7 @@ fn fetch_lyrics(title: &str, artist: &str, duration_ms: f64) -> Option<LyricsHit
         }
     }
 
-    // 第四轮：本地文件
+    // 第三轮：本地文件
     fetch_from_local(title, artist)
 }
 
@@ -541,10 +531,9 @@ fn push_query(out: &mut Vec<Query>, title: &str, artist: &str) {
         return;
     }
     let artist = artist.trim();
-    if out
-        .iter()
-        .any(|query| query.title.eq_ignore_ascii_case(title) && query.artist.eq_ignore_ascii_case(artist))
-    {
+    if out.iter().any(|query| {
+        query.title.eq_ignore_ascii_case(title) && query.artist.eq_ignore_ascii_case(artist)
+    }) {
         return;
     }
     out.push(Query {
@@ -575,7 +564,8 @@ fn split_artists(raw: &str) -> Vec<String> {
         let lower = part.to_lowercase();
         for marker in [" feat. ", " feat ", " ft. ", " ft ", " featuring ", " with "] {
             if let Some(index) = lower.find(marker) {
-                part = part[..index].trim();
+                // 只在字符边界上截断：marker 是 ASCII，落在 lower 里的位置未必是 part 的边界
+                part = trim_at_char_boundary(part, index);
                 break;
             }
         }
@@ -584,6 +574,15 @@ fn split_artists(raw: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// 按字节位置截断到最近的字符边界（小写转换可能改变字节长度，不能直接切片）。
+fn trim_at_char_boundary(text: &str, index: usize) -> &str {
+    let mut end = index.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].trim()
 }
 
 /// 剥掉曲名 / 歌手里的修饰段：
@@ -636,7 +635,7 @@ fn clean_title(title: &str) -> String {
 
     let mut text = out.trim().to_string();
     if let Some(index) = find_marker(&text, &[" feat. ", " feat ", " ft. ", " ft ", " featuring "]) {
-        text.truncate(index);
+        text = trim_at_char_boundary(&text, index).to_string();
     }
 
     collapse_spaces(text.trim())
@@ -767,23 +766,9 @@ struct MatchRules {
     require_artist: bool,
 }
 
-/// 严格：时长必须接近，曲名不必一字不差（现场版 / 翻唱会被自然排除）。
-const STRICT_RULES: MatchRules = MatchRules {
-    tolerance_ms: STRICT_TOLERANCE_MS,
-    min_title_score: MIN_TITLE_SCORE,
-    require_artist: false,
-};
-
-/// 宽松：曲名与歌手都要对得上，但容忍时长标注不准的条目。
-const LOOSE_RULES: MatchRules = MatchRules {
-    tolerance_ms: LOOSE_TOLERANCE_MS,
-    min_title_score: MIN_LOOSE_TITLE_SCORE,
-    require_artist: true,
-};
-
-/// 网易云：搜索结果的曲名常带后缀，曲名门槛放宽，靠歌手与时长排序。
-const NETEASE_RULES: MatchRules = MatchRules {
-    tolerance_ms: LOOSE_TOLERANCE_MS,
+/// QQ 音乐 / 网易云：搜索结果的曲名常带后缀，曲名门槛放宽，靠歌手与时长排序。
+const SEARCH_RULES: MatchRules = MatchRules {
+    tolerance_ms: DURATION_TOLERANCE_MS,
     min_title_score: MIN_TITLE_SCORE,
     require_artist: false,
 };
@@ -853,33 +838,30 @@ impl Picker {
         Self { best: None }
     }
 
-    fn offer(&mut self, lrc: &str, matched: Option<Match>) {
+    /// `identity` 是拿来取歌词用的标识（QQ 的 songmid / 网易云的 id）。
+    fn offer(&mut self, matched: Option<Match>, identity: &str) {
         let Some(matched) = matched else {
             return;
         };
-        if !has_time_tags(lrc) {
+        if identity.is_empty() {
             return;
         }
 
         let better = match &self.best {
             None => true,
             Some((score, diff, _)) => {
-                matched.score > *score
-                    || (matched.score == *score && matched.duration_diff < *diff)
+                matched.score > *score || (matched.score == *score && matched.duration_diff < *diff)
             }
         };
 
         if better {
-            self.best = Some((matched.score, matched.duration_diff, lrc.to_string()));
+            self.best = Some((matched.score, matched.duration_diff, identity.to_string()));
         }
     }
 
-    fn into_hit(self, origin: LyricsOrigin) -> Option<LyricsHit> {
-        let (_, _, lrc) = self.best?;
-        Some(LyricsHit {
-            body: LyricsBody::Text(lrc),
-            origin,
-        })
+    fn into_identity(self) -> Option<String> {
+        let (_, _, identity) = self.best?;
+        Some(identity)
     }
 }
 
@@ -933,59 +915,118 @@ fn bigrams(text: &str) -> HashSet<String> {
     out
 }
 
-// ---------------- lrclib.net ----------------
+// ---------------- QQ 音乐 ----------------
 
-/// lrclib.net 开放接口：返回歌词条目数组，按曲名 / 歌手 / 时长择优。
-fn lrclib_search(
-    query: &Query,
-    duration_ms: f64,
-    rules: &MatchRules,
-) -> Result<Option<LyricsHit>, HttpError> {
-    let mut request = ureq::get("https://lrclib.net/api/search")
-        .query("track_name", &query.title)
-        .timeout(REQUEST_TIMEOUT)
-        .set("User-Agent", USER_AGENT);
+/// QQ 音乐：先搜索出 songmid（带时长，便于挑专辑版），再取该曲的 LRC。
+fn qq_search(query: &Query, duration_ms: f64) -> Result<Option<LyricsHit>, HttpError> {
+    let keyword = if query.artist.trim().is_empty() {
+        query.title.clone()
+    } else {
+        format!("{} {}", query.title, query.artist)
+    };
 
-    if !query.artist.is_empty() {
-        request = request.query("artist_name", &query.artist);
-    }
+    // musicu.fcg 的搜索接口：一次请求就能拿到 mid / 曲名 / 歌手 / 时长
+    let body = serde_json::json!({
+        "comm": { "ct": 19, "cv": 1859, "uin": "0" },
+        "req": {
+            "method": "DoSearchForQQMusicDesktop",
+            "module": "music.search.SearchCgiService",
+            "param": { "num_per_page": 10, "page_num": 1, "query": keyword, "search_type": 0 }
+        }
+    });
 
-    let value = http_json(request)?;
-    let items = match value.as_array() {
-        Some(items) => items,
-        None => return Err(HttpError::Parse),
+    let value = read_json(
+        ureq::post("https://u.y.qq.com/cgi-bin/musicu.fcg")
+            .timeout(REQUEST_TIMEOUT)
+            .set("User-Agent", USER_AGENT)
+            .set("Referer", "https://y.qq.com/")
+            .set("Content-Type", "application/json")
+            .send_string(&body.to_string()),
+    )?;
+
+    let songs = match value
+        .pointer("/req/data/body/song/list")
+        .and_then(|node| node.as_array())
+    {
+        Some(songs) => songs,
+        None => return Ok(None),
     };
 
     let mut picker = Picker::new();
-    for item in items {
-        let synced = item
-            .get("syncedLyrics")
-            .and_then(|value| value.as_str())
-            .unwrap_or("");
-        if synced.trim().is_empty() {
+    for song in songs {
+        let mid = song.get("mid").and_then(|node| node.as_str()).unwrap_or("");
+        if mid.is_empty() {
             continue;
         }
 
-        let track = item
-            .get("trackName")
-            .and_then(|value| value.as_str())
-            .unwrap_or("");
-        let artist = item
-            .get("artistName")
-            .and_then(|value| value.as_str())
-            .unwrap_or("");
-        let candidate_ms = item
-            .get("duration")
-            .and_then(|value| value.as_f64())
+        let name = song.get("name").and_then(|node| node.as_str()).unwrap_or("");
+        // `title` 有时带 `(Live)` 之类后缀，`name` 通常是正式曲名：两个都试，取能得到更高分的一个
+        let title = song.get("title").and_then(|node| node.as_str()).unwrap_or("");
+        let singer = song
+            .get("singer")
+            .and_then(|node| node.as_array())
+            .map(|list| {
+                list.iter()
+                    .filter_map(|item| item.get("name").and_then(|node| node.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("/")
+            })
+            .unwrap_or_default();
+        let candidate_ms = song
+            .get("interval")
+            .and_then(|node| node.as_f64())
             .map(|seconds| seconds * 1000.0);
 
-        picker.offer(
-            synced,
-            score_match(query, track, artist, candidate_ms, duration_ms, rules),
-        );
+        let matched = score_match(query, name, &singer, candidate_ms, duration_ms, &SEARCH_RULES)
+            .or_else(|| {
+                score_match(query, title, &singer, candidate_ms, duration_ms, &SEARCH_RULES)
+            });
+
+        picker.offer(matched, mid);
     }
 
-    Ok(picker.into_hit(LyricsOrigin::Lrclib))
+    let Some(mid) = picker.into_identity() else {
+        return Ok(None);
+    };
+
+    qq_lyric(&mid)
+}
+
+/// 取单曲歌词：`nobase64=1` 直接回明文 LRC，省掉一次 base64 解码。
+fn qq_lyric(song_mid: &str) -> Result<Option<LyricsHit>, HttpError> {
+    let value = http_json(
+        ureq::get("https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg")
+            .query("songmid", song_mid)
+            .query("format", "json")
+            .query("nobase64", "1")
+            .timeout(REQUEST_TIMEOUT)
+            .set("User-Agent", USER_AGENT)
+            .set("Referer", "https://y.qq.com/portal/player.html"),
+    )?;
+
+    let code = value.get("code").and_then(|node| node.as_i64()).unwrap_or(0);
+    let retcode = value
+        .get("retcode")
+        .and_then(|node| node.as_i64())
+        .unwrap_or(0);
+    if code != 0 || retcode != 0 {
+        return Ok(None);
+    }
+
+    let lrc = value
+        .get("lyric")
+        .and_then(|node| node.as_str())
+        .unwrap_or("");
+
+    // 纯文本歌词（没有时间轴）在这里就丢掉，好让后面的来源有机会兜底。
+    if lrc.trim().is_empty() || !has_time_tags(lrc) {
+        return Ok(None);
+    }
+
+    Ok(Some(LyricsHit {
+        body: LyricsBody::Text(lrc.to_string()),
+        origin: LyricsOrigin::Qq,
+    }))
 }
 
 // ---------------- 网易云音乐 ----------------
@@ -1012,59 +1053,52 @@ fn netease_search(query: &Query, duration_ms: f64) -> Result<Option<LyricsHit>, 
             ]),
     )?;
 
-    let songs = match value.pointer("/result/songs").and_then(|v| v.as_array()) {
+    let songs = match value.pointer("/result/songs").and_then(|node| node.as_array()) {
         Some(songs) => songs,
         None => return Ok(None),
     };
 
-    let mut best: Option<(i32, f64, i64)> = None;
+    let mut picker = Picker::new();
     for song in songs {
-        let Some(id) = song.get("id").and_then(|value| value.as_i64()) else {
+        let Some(id) = song.get("id").and_then(|node| node.as_i64()) else {
             continue;
         };
 
-        let track = song.get("name").and_then(|value| value.as_str()).unwrap_or("");
+        let track = song
+            .get("name")
+            .and_then(|node| node.as_str())
+            .unwrap_or("");
         let artist = song
             .get("artists")
-            .and_then(|value| value.as_array())
+            .and_then(|node| node.as_array())
             .map(|list| {
                 list.iter()
-                    .filter_map(|item| item.get("name").and_then(|v| v.as_str()))
+                    .filter_map(|item| item.get("name").and_then(|node| node.as_str()))
                     .collect::<Vec<_>>()
                     .join("/")
             })
             .unwrap_or_default();
-        let candidate_ms = song.get("duration").and_then(|value| value.as_f64());
+        let candidate_ms = song.get("duration").and_then(|node| node.as_f64());
 
-        let Some(matched) = score_match(
+        let matched = score_match(
             query,
             track,
             &artist,
             candidate_ms,
             duration_ms,
-            &NETEASE_RULES,
-        ) else {
-            continue;
-        };
+            &SEARCH_RULES,
+        );
 
-        let better = match &best {
-            None => true,
-            Some((score, diff, _)) => {
-                matched.score > *score || (matched.score == *score && matched.duration_diff < *diff)
-            }
-        };
-        if better {
-            best = Some((matched.score, matched.duration_diff, id));
-        }
+        picker.offer(matched, &id.to_string());
     }
 
-    let Some((_, _, song_id)) = best else {
+    let Some(id) = picker.into_identity() else {
         return Ok(None);
     };
 
     let value = http_json(
         ureq::get("https://music.163.com/api/song/lyric")
-            .query("id", &song_id.to_string())
+            .query("id", &id)
             .query("lv", "-1")
             .query("kv", "-1")
             .query("tv", "-1")
@@ -1076,10 +1110,9 @@ fn netease_search(query: &Query, duration_ms: f64) -> Result<Option<LyricsHit>, 
 
     let lrc = value
         .pointer("/lrc/lyric")
-        .and_then(|value| value.as_str())
+        .and_then(|node| node.as_str())
         .unwrap_or("");
 
-    // 纯文本歌词（没有时间轴）在这里就丢掉，好让本地文件有机会兜底。
     if lrc.trim().is_empty() || !has_time_tags(lrc) {
         return Ok(None);
     }
@@ -1311,25 +1344,92 @@ mod tests {
         assert!(title_similarity("夜曲", "完全不相干") < MIN_TITLE_SCORE);
     }
 
+    /// 联网冒烟：`cargo test --lib -- --ignored --nocapture`
+    ///
+    /// 只打印来源与首行，不写入任何曲目信息到日志（测试输出仅本地可见）。
+    #[test]
+    #[ignore = "需要联网"]
+    fn qq_pipeline_smoke() {
+        for (title, artist, duration) in [
+            ("夜曲", "周杰伦", 226_000.0),
+            ("晴天 (Live)", "周杰伦", 269_000.0),
+            ("Shape of You", "Ed Sheeran", 233_000.0),
+        ] {
+            let hit = fetch_lyrics(title, artist, duration);
+            match hit {
+                Some(found) => {
+                    let text = match &found.body {
+                        LyricsBody::Text(text) => text.clone(),
+                        LyricsBody::Bytes(bytes) => String::from_utf8_lossy(bytes).to_string(),
+                    };
+                    let first = text
+                        .lines()
+                        .find(|line| has_time_tags(line))
+                        .unwrap_or("")
+                        .chars()
+                        .take(40)
+                        .collect::<String>();
+                    println!("{title} -> {} | {first}", found.origin.label());
+                }
+                None => println!("{title} -> 未命中"),
+            }
+        }
+    }
+
     #[test]
     fn score_match_rejects_far_durations() {
         let query = Query {
             title: "夜曲".to_string(),
             artist: "周杰伦".to_string(),
         };
+        // 严格的歌手要求：合唱 / 翻唱里歌手对不上就不认
+        let strict = MatchRules {
+            tolerance_ms: DURATION_TOLERANCE_MS,
+            min_title_score: MIN_TITLE_SCORE,
+            require_artist: true,
+        };
 
-        let near = score_match(&query, "夜曲", "周杰伦", Some(226_000.0), 225_000.0, &STRICT_RULES);
+        let near = score_match(
+            &query,
+            "夜曲",
+            "周杰伦",
+            Some(226_000.0),
+            225_000.0,
+            &SEARCH_RULES,
+        );
         assert!(near.is_some());
 
-        let far = score_match(&query, "夜曲", "周杰伦", Some(300_000.0), 225_000.0, &STRICT_RULES);
+        // 时长差太大：不是同一个版本
+        let far = score_match(
+            &query,
+            "夜曲",
+            "周杰伦",
+            Some(300_000.0),
+            225_000.0,
+            &SEARCH_RULES,
+        );
         assert!(far.is_none());
 
         // 歌名对不上时，时长再接近也不能用
-        let wrong = score_match(&query, "发如雪", "周杰伦", Some(225_000.0), 225_000.0, &LOOSE_RULES);
+        let wrong = score_match(
+            &query,
+            "发如雪",
+            "周杰伦",
+            Some(225_000.0),
+            225_000.0,
+            &SEARCH_RULES,
+        );
         assert!(wrong.is_none());
 
-        // 宽松规则要求歌手也对得上
-        let cover = score_match(&query, "夜曲", "某翻唱歌手", Some(225_000.0), 225_000.0, &LOOSE_RULES);
+        // 严格规则要求歌手也对得上
+        let cover = score_match(
+            &query,
+            "夜曲",
+            "某翻唱歌手",
+            Some(225_000.0),
+            225_000.0,
+            &strict,
+        );
         assert!(cover.is_none());
     }
 }

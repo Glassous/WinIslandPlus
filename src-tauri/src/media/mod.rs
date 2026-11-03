@@ -48,6 +48,8 @@ const POSITION_EMIT_DELTA_MS: f64 = 120.0;
 const SEEK_VERIFY_MS: f64 = 900.0;
 /// 核对的容差：跳转后位置与目标差这么多以内就算成功（播放中还会继续前进）。
 const SEEK_VERIFY_TOLERANCE_MS: f64 = 2_500.0;
+/// 歌词请求发出后多久还没结果就重发一次（防请求丢失 / 歌词线程正忙）。
+const LYRICS_RECHECK_MS: f64 = 20_000.0;
 
 type Session = GlobalSystemMediaTransportControlsSession;
 type Manager = GlobalSystemMediaTransportControlsSessionManager;
@@ -334,8 +336,9 @@ fn run(
     // 控制指令后的高密度探测窗口：SMTC 状态传播有延迟，指令后的第一次探测常读到旧状态，
     // 若不密集追一段时间，暂停态要等满 1s 轮询周期前端才能见到新状态（按钮"延迟"的根因）。
     let mut fast_until = 0.0f64;
-    // 最近一次请求过歌词的曲目键（换歌时重新请求）。
+    // 最近一次请求过歌词的曲目键与请求时刻（换歌时重新请求）。
     let mut last_lyrics_key = String::new();
+    let mut last_lyrics_at = 0.0f64;
     // 跳转能力档案：哪些应用不接受外部跳转、哪次跳转还等着核对。
     let mut seek = SeekTracker::default();
     // 最近一次探测到的快照（跳转核对要拿它当「发出指令时的曲目」）。
@@ -396,11 +399,23 @@ fn run(
                 let key = s.track_key();
                 if key != last_lyrics_key {
                     last_lyrics_key = key;
+                    last_lyrics_at = now_ms();
                     // 带上时长：歌词接口按「时长最接近」择优，避免选中现场版/翻唱条目
+                    lyrics.request(&s.title, &s.artist, &s.album_title, s.duration_ms);
+                } else if now_ms() - last_lyrics_at > LYRICS_RECHECK_MS
+                    && lyrics.delivered_key().as_deref() != Some(last_lyrics_key.as_str())
+                {
+                    // 这么久了还没有任何结果回来：可能请求丢了 / 线程在忙，再要一次。
+                    // 歌词服务按曲目键去重并带缓存，重复请求不会再打一遍网络。
+                    last_lyrics_at = now_ms();
+                    log::info("media: 歌词迟迟未到，重新请求");
                     lyrics.request(&s.title, &s.artist, &s.album_title, s.duration_ms);
                 }
             }
-            None => last_lyrics_key.clear(),
+            None => {
+                last_lyrics_key.clear();
+                last_lyrics_at = 0.0;
+            }
         }
 
         let should_emit = match (&snapshot, &last_emitted) {

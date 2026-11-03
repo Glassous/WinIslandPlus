@@ -20,6 +20,11 @@ export const PILL_PADDING = 18;
 export const PILL_GAP = 8;
 /** 胶囊行与卡片行之间的间距。 */
 export const ROW_GAP = 8;
+/**
+ * 岛窗在胶囊行右侧额外预留的透明宽度（与 `src-tauri/src/metrics.rs` 的
+ * `PILL_LYRIC_SLACK` 逐值一致）：歌词样式靠它向右伸展而不被窗口边缘裁掉。
+ */
+export const PILL_LYRIC_SLACK = 260;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -37,6 +42,18 @@ export function dshInnerMaxWidth(): number {
 export function dshPillWidth(dshInnerWidth: number): number {
   if (dshInnerWidth <= 0) return 0;
   return clamp(dshInnerWidth + PILL_PADDING, DSH_PILL_MIN, DSH_PILL_MAX);
+}
+
+/**
+ * 歌词模式下胶囊的最大宽度：左沿与标准胶囊完全一致（同样居中），
+ * 右沿最多伸到窗口右端（卡片宽度 + 右侧预留区）。
+ *
+ * 这个上限只是「窗口到底了」的物理边界，不是人为截断——正常长度的一句歌词
+ * 远小于它，所以不会再出现动不动就被裁掉的情况。
+ */
+export function pillLyricMaxWidth(cardWidth: number, pillWidth: number): number {
+  const left = (cardWidth - pillWidth) / 2;
+  return Math.max(pillWidth, cardWidth + PILL_LYRIC_SLACK - left);
 }
 
 /** 胶囊行与卡片行在窗口内的纵向起点（DIP，贴底时整行镜像）。 */

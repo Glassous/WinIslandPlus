@@ -30,6 +30,13 @@ pub struct IslandMetrics {
 /// 两行之间的这一条始终透明并参与形状命中判定（判定按两块实际形状分别计算）。
 pub const ROW_GAP: f64 = 8.0;
 
+/// 岛窗在胶囊行右侧额外预留的透明宽度（DIP）。
+///
+/// 胶囊切到「歌词」样式时宽度随整句歌词向右生长，窗口必须比卡片更宽，
+/// 否则歌词会被窗口边缘裁掉。这块区域完全透明、不参与形状命中（照常点击穿透），
+/// 只有真的出现长歌词时才会有内容落进去，因此不影响平时的手感与观感。
+pub const PILL_LYRIC_SLACK: f64 = 260.0;
+
 impl IslandMetrics {
     /// 胶囊固定为 2:1（宽度是高度的两倍）；展开态约 1.8:1。
     pub fn for_preset(preset: IslandSizePreset, custom_width: f64) -> Self {
@@ -89,5 +96,10 @@ impl IslandMetrics {
     /// 展开 / 收起只改变内部形状，不会出现「窗口先放大、内容后跟上」的空白帧。
     pub fn window_height(&self) -> f64 {
         self.pill_height + ROW_GAP + self.card_height
+    }
+
+    /// 岛窗宽度：卡片宽 + 右侧歌词预留区（见 [`PILL_LYRIC_SLACK`]）。
+    pub fn window_width(&self) -> f64 {
+        self.card_width + PILL_LYRIC_SLACK
     }
 }

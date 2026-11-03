@@ -4,6 +4,7 @@ import {
   PILL_GAP,
   dshPillWidth,
   metricsFor,
+  pillLyricMaxWidth,
   rowOffsets,
 } from "../common/metrics";
 import { theme } from "../common/theme";
@@ -15,6 +16,7 @@ import type {
   IslandSide,
   LyricsSnapshot,
   MediaSnapshot,
+  PillRightStyle,
   PositionPayload,
   ShapeRect,
 } from "../common/types";
@@ -42,8 +44,13 @@ let dshEnabled = true;
 let expanded: IslandSide | null = null;
 let bottomAnchored = false;
 let dragEnabled = false;
+/** 胶囊右侧样式：频谱 / 进度圈 / 歌词，同一时刻只生效一个。 */
+let rightStyle: PillRightStyle = "Spectrum";
 /** dsh 胶囊内容区的自然宽度（DIP），0 表示没有 dsh。 */
 let dshInnerWidth = 0;
+
+/** 歌词换句时的胶囊伸缩时长（毫秒）：比展开动画短一点，换句才跟得上。 */
+const LYRIC_WIDTH_MS = 260;
 
 const mediaPill = new MediaPillView(mediaActorEl);
 const dshPill = new DshPillView(dshActorEl);
@@ -87,6 +94,12 @@ const mediaCard = new MediaCard(document.getElementById("mediaCard")!, {
       mediaCard.tickLyrics(position);
     }
   },
+  // 卡片与胶囊共用同一条歌词时间轴：换句时把新的一句交给胶囊
+  onLyricLine: (text) => {
+    // 胶囊宽度跟着这句歌词走，且只向右生长（左沿固定），所以换句只需要重新解算一次几何
+    if (!mediaPill.setLyric(text)) return;
+    relayout(true, LYRIC_WIDTH_MS, "out");
+  },
 });
 
 // ---------------- 双岛几何 ----------------
@@ -118,13 +131,52 @@ function hasDshContent(): boolean {
 }
 
 /**
+ * 媒体胶囊的几何（歌词模式下的伸缩都收敛在这里）。
+ *
+ * 三种样式的胶囊位置完全一致：x 恒为标准胶囊居中时的左沿，所以封面（以及
+ * 胶囊里的一切）在切换样式、换句时都不会左右移动。
+ * 歌词样式只改宽度：按这句歌词解算，宽度走补间**只向右生长**，
+ * 右沿最多伸到胶囊行右端（胶囊行就是卡片宽度），超出的部分由胶囊裁掉。
+ */
+function mediaPillGeometry(m: IslandMetrics, pillY: number): ActorGeometry {
+  // 左沿固定：与频谱 / 进度圈模式下的标准胶囊同一位置
+  const left = (m.CardWidth - m.PillWidth) / 2;
+
+  if (rightStyle !== "Lyrics") {
+    return {
+      x: left,
+      y: pillY,
+      width: m.PillWidth,
+      height: m.PillHeight,
+      radius: m.PillCorner,
+      morph: 0,
+    };
+  }
+
+  const width = Math.max(
+    m.PillWidth,
+    mediaPill.lyricPillWidth(m.PillWidth, pillLyricMaxWidth(m.CardWidth, m.PillWidth)),
+  );
+
+  return {
+    x: left,
+    y: pillY,
+    width,
+    height: m.PillHeight,
+    radius: m.PillCorner,
+    morph: 0,
+  };
+}
+
+/**
  * 解算两个岛面的目标几何（DIP，相对岛窗客户区）。
  *
  * 窗口按行切分：胶囊行贴屏幕边缘，卡片行在它内侧，中间隔 `ROW_GAP`。
  * - 只有一个岛：胶囊 / 卡片都居中，与原来的单岛行为一致；
  * - 两个都缩着：dsh 胶囊在左、媒体正圆在右，整组居中；
  * - 展开：被展开者变成卡片长在卡片行，另一个留在胶囊行并居中；
- *   此时胶囊行只剩一个岛，媒体回到普通胶囊形态（封面在左、频谱在右）。
+ *   此时胶囊行只剩一个岛，媒体回到普通胶囊形态（封面在左、右侧元素在右）。
+ * - 歌词样式：胶囊左沿固定、宽度按整句歌词**只向右**生长（见 `mediaPillGeometry`）。
  */
 function computeLayout(): LayoutTarget {
   const m = metrics;
@@ -137,14 +189,7 @@ function computeLayout(): LayoutTarget {
   const circle = pillH;
 
   // 缺省：两个岛都以胶囊形态居中（只有一个时即为「保持现状」）
-  const mediaPill: ActorGeometry = {
-    x: (cardW - m.PillWidth) / 2,
-    y: rows.pillY,
-    width: m.PillWidth,
-    height: pillH,
-    radius: m.PillCorner,
-    morph: 0,
-  };
+  const mediaPill = mediaPillGeometry(m, rows.pillY);
   const dshPillTarget: ActorGeometry = {
     x: (cardW - dshW) / 2,
     y: rows.pillY,
@@ -406,6 +451,18 @@ function syncDshContent(): void {
   dshCard.setDsh(active);
 }
 
+/**
+ * 切换胶囊右侧样式（频谱 / 进度圈 / 歌词，互斥）。
+ * 只写状态与 DOM；重新布局交给调用方（设置窗口的改动最后都会走一次 relayout）。
+ */
+function applyRightStyle(style: PillRightStyle): void {
+  const next = style ?? "Spectrum";
+  if (next === rightStyle) return;
+
+  rightStyle = next;
+  mediaPill.setRightStyle(next);
+}
+
 function setExpanded(next: IslandSide | null, animate = true): void {
   if (next === "media" && !media) return;
   if (next === "dsh" && !hasDshContent()) return;
@@ -550,6 +607,8 @@ function bindEvents(): void {
   on<IslandSettings>(events.settingsChanged, (next) => {
     dshEnabled = next.DshEnabled !== false;
     syncDshContent();
+    // 胶囊右侧样式：频谱 / 进度圈 / 歌词三选一，下面的 relayout 会顺带把宽度解算进去
+    applyRightStyle(next.PillRightStyle);
 
     const updated = metricsFor(next.Size, next.CustomPillWidth);
     const sizeChanged =
@@ -602,6 +661,7 @@ async function init(): Promise<void> {
   stageEl.classList.toggle("bottom", bottomAnchored);
 
   applyMetrics(metricsFor(boot.Settings.Size, boot.Settings.CustomPillWidth));
+  applyRightStyle(boot.Settings.PillRightStyle);
 
   // 首帧内容先写好，再一次性落位（tween 尚未初始化，会走 snap）
   if (media) {
@@ -649,6 +709,10 @@ function startProgressLoop(): void {
     if (!media) return;
     const duration = media.DurationMs > 0 ? media.DurationMs : clock.durationMs;
     const position = clock.position();
+
+    // 胶囊右侧的进度圈：与卡片进度同步（其它样式里这个调用是空操作）
+    if (duration > 0) mediaPill.setProgress(position / duration);
+
     // 歌词行不受展开限制：保证展开瞬间当前句已就位
     mediaCard.tickLyrics(position);
     if (expanded !== "media" || duration <= 0) return;

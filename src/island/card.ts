@@ -16,6 +16,12 @@ export interface CardCallbacks {
   onNext: () => void;
   onSeek: (fraction: number) => void;
   onUserActed: () => void;
+  /**
+   * 当前句变化（含「无歌词」→ 空串）：胶囊的歌词模式靠它同步文案。
+   *
+   * 卡片与胶囊共用同一条时间轴，胶囊不需要自己再解析一遍歌词。
+   */
+  onLyricLine?: (text: string) => void;
 }
 
 /** 歌词滚动换位时长（与 `.lyric-roll` 的 transform transition 保持一致）。 */
@@ -71,8 +77,11 @@ export class MediaCard {
   private readonly reduceMotion: boolean;
   /** 歌词行缓存：媒体 → 收起 → 重新展开时立刻恢复，不用等后端再回一次。 */
   private readonly lyricsCache = new Map<string, LyricLine[]>();
+  /** 当前句变化时通知外层（胶囊歌词模式）。 */
+  private readonly onLyricLine?: (text: string) => void;
 
   constructor(root: HTMLElement, callbacks: CardCallbacks) {
+    this.onLyricLine = callbacks.onLyricLine;
     this.coverImage = root.querySelector<HTMLElement>("#coverImageHost")!;
     this.title = root.querySelector<HTMLElement>("#titleText")!;
     this.artist = root.querySelector<HTMLElement>("#artistText")!;
@@ -195,7 +204,8 @@ export class MediaCard {
   setLyrics(snapshot: LyricsSnapshot): void {
     const key = trackKeyOf(snapshot);
     const text = snapshot.Lrc ?? (snapshot.LrcHex ? decodeLyricsHex(snapshot.LrcHex) : "");
-    const lines = text.length > 0 ? parseLrc(text) : [];
+    // 带上曲名：QQ / 网易云的歌词开头常有「歌名 - 歌手」这行头部信息，解析时丢掉
+    const lines = text.length > 0 ? parseLrc(text, 0, snapshot.Title) : [];
 
     this.cacheLyrics(key, lines);
 
@@ -268,6 +278,7 @@ export class MediaCard {
         ? displayText(this.lyricLines[nextIndex])
         : "";
 
+    this.onLyricLine?.(current);
     this.showLine(current, next, true);
   }
 
@@ -395,6 +406,9 @@ export class MediaCard {
     this.lyricRowText = ["", ""];
     this.activeRow = 0;
     this.lyricProgress = 0;
+
+    // 胶囊的歌词模式跟着清空：没有歌词时它退回标准宽度（频谱占位）
+    this.onLyricLine?.("");
 
     const fallback = album.trim();
     this.lyric.hidden = fallback.length === 0;

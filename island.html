@@ -25,7 +25,13 @@
         <!-- 封面取色流光：只属于媒体卡片（光源由 glow.ts 生成，在卡片边缘局部游走） -->
         <div class="glow-layer" id="glowLayer" aria-hidden="true"></div>
 
-        <!-- 胶囊层：只有一个岛时是「左封面 + 右音柱」胶囊；两个岛并存时收成正圆只显示封面 -->
+        <!--
+          胶囊层：只有一个岛时是「左封面 + 右侧元素」胶囊；两个岛并存时收成正圆只显示封面。
+          右侧元素三选一（由设置 PillRightStyle 决定，互斥）：
+            .pill-bars  跳动频谱（默认）
+            .pill-ring  播放进度圈
+            .pill-lyric 当前一句歌词（胶囊宽度按文字长度向右伸展）
+        -->
         <div class="pill-layer" id="mediaPillLayer">
           <div class="media-pill" id="mediaPill">
             <div class="pill-cover" id="pillCover" hidden></div>
@@ -34,6 +40,16 @@
               <span class="bar" id="bar2"></span>
               <span class="bar" id="bar3"></span>
               <span class="bar" id="bar4"></span>
+            </div>
+            <div class="pill-ring" id="pillRing" aria-hidden="true">
+              <svg viewBox="0 0 20 20">
+                <circle class="pill-ring-track" cx="10" cy="10" r="8" />
+                <!-- pathLength=100：进度直接写成 stroke-dashoffset 的百分比，不用算周长 -->
+                <circle class="pill-ring-fill" id="pillRingFill" cx="10" cy="10" r="8" pathLength="100" />
+              </svg>
+            </div>
+            <div class="pill-lyric" id="pillLyric">
+              <span class="pill-lyric-text" id="pillLyricText"></span>
             </div>
           </div>
         </div>
