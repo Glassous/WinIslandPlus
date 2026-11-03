@@ -1,5 +1,17 @@
 import type { MediaSnapshot } from "./types";
 
+/**
+ * 曲目身份键：与后端媒体快照 / 歌词缓存同构。
+ *
+ * 后端用同一个键判断「是否换歌」「歌词属于哪首歌」，因此前端做歌词对齐、
+ * 时钟重锚时也必须用这里的实现，不能自己拼字符串。
+ */
+export function trackKeyOf(
+  snapshot: Pick<MediaSnapshot, "Title" | "Artist" | "AlbumTitle">,
+): string {
+  return `${snapshot.Title}\u001f${snapshot.Artist}\u001f${snapshot.AlbumTitle}`;
+}
+
 /** 按当前时刻推算播放位置（播放中线性推进，暂停时固定）。 */
 export function positionAt(snapshot: MediaSnapshot, now: number = Date.now()): number {
   let position = snapshot.PositionMs;

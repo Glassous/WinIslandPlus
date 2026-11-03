@@ -59,7 +59,11 @@ export class SeekBar {
     root.addEventListener("pointermove", this.onPointerMove);
     root.addEventListener("pointerup", this.onPointerUp);
     root.addEventListener("pointercancel", this.onPointerCancel);
-    root.addEventListener("pointerenter", () => root.classList.add("hover"));
+    // 不可拖动（直播流 / 播放器不接受外部跳转）时连悬停效果都不给：
+    // 滑块不出现，用户一眼就知道这条进度条拖不动
+    root.addEventListener("pointerenter", () => {
+      if (this.interactable) root.classList.add("hover");
+    });
     root.addEventListener("pointerleave", () => {
       if (!this.scrubbing) root.classList.remove("hover");
     });
@@ -71,8 +75,14 @@ export class SeekBar {
   }
 
   setInteractable(value: boolean): void {
+    if (this.interactable === value) return;
+
     this.interactable = value;
     this.root.classList.toggle("disabled", !value);
+
+    // 拖动途中被禁用（例如后端刚判定这个播放器不支持跳转）：直接中止，
+    // 不能走 complete() —— 那会把最后的位置当成一次跳转请求发出去
+    if (!value && this.scrubbing) this.abort();
   }
 
   /** 外部推进进度（拖动中、以及松手后尚未归位时忽略，避免抖动 / 回弹）。 */
@@ -93,7 +103,13 @@ export class SeekBar {
   }
 
   private onPointerDown = (event: PointerEvent): void => {
-    if (!this.interactable || event.button !== 0) return;
+    if (event.button !== 0) return;
+
+    // 不可拖动：吞掉这次点击的冒泡，别让它被当成「点空白处」把卡片收起来
+    if (!this.interactable) {
+      event.stopPropagation();
+      return;
+    }
 
     // 阻止冒泡：拖动进度条不应该让整个岛收起
     event.stopPropagation();
@@ -203,9 +219,22 @@ export class SeekBar {
   private complete(): void {
     if (!this.scrubbing) return;
 
+    this.abort();
+
+    // 松手后的归位锁定：真实快照回来之前不让旧进度覆盖拖拽结果
+    this.lockFraction = this.fraction;
+    this.lockUntil = performance.now() + SEEK_LOCK_MS;
+
+    this.callbacks.onSeekRequested?.(this.fraction);
+    this.callbacks.onUserActed?.();
+  }
+
+  /** 中止拖动（不发跳转请求）：禁用、窗口失焦等场景用。 */
+  private abort(): void {
     this.scrubbing = false;
     this.stopPolling();
     this.root.classList.remove("hover");
+    this.lockUntil = 0;
 
     if (this.pointerId >= 0) {
       try {
@@ -215,13 +244,6 @@ export class SeekBar {
       }
       this.pointerId = -1;
     }
-
-    // 松手后的归位锁定：真实快照回来之前不让旧进度覆盖拖拽结果
-    this.lockFraction = this.fraction;
-    this.lockUntil = performance.now() + SEEK_LOCK_MS;
-
-    this.callbacks.onSeekRequested?.(this.fraction);
-    this.callbacks.onUserActed?.();
   }
 
   private render(): void {

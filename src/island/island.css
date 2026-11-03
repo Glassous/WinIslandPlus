@@ -791,8 +791,22 @@ body.island-body {
   opacity: 1;
 }
 
+/*
+ * 不可拖动：直播流（时长未知）以及实测「拖了没反应」的播放器。
+ * 进度照常显示，但压暗、不出滑块、光标也不给暗示——避免用户反复拖一条推不动的进度条。
+ */
 .seekbar.disabled {
-  opacity: 0.5;
+  opacity: 0.45;
+  cursor: default;
+}
+
+.seekbar.disabled.hover .seek-track,
+.seekbar.disabled.hover .seek-fill {
+  height: 3px;
+}
+
+.seekbar.disabled.hover .seek-thumb {
+  opacity: 0;
 }
 
 /*

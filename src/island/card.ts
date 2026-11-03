@@ -1,4 +1,4 @@
-import { currentPosition, formatRemaining, formatTime } from "../common/time";
+import { currentPosition, formatRemaining, formatTime, trackKeyOf } from "../common/time";
 import type { LyricsSnapshot, MediaSnapshot } from "../common/types";
 import {
   activeLineIndex,
@@ -16,11 +16,6 @@ export interface CardCallbacks {
   onNext: () => void;
   onSeek: (fraction: number) => void;
   onUserActed: () => void;
-}
-
-/** 曲目身份键：歌词事件靠它与当前曲目对齐（与后端歌词缓存同构）。 */
-function trackKey(title: string, artist: string, album: string): string {
-  return `${title}\u{1f}${artist}\u{1f}${album}`;
 }
 
 /** 歌词滚动换位时长（与 `.lyric-roll` 的 transform transition 保持一致）。 */
@@ -117,7 +112,7 @@ export class MediaCard {
     return this.seekBar;
   }
 
-  update(snapshot: MediaSnapshot | null): void {
+  update(snapshot: MediaSnapshot | null, positionMs?: number): void {
     if (!snapshot) {
       this.title.textContent = "暂无媒体";
       this.artist.textContent = "";
@@ -155,16 +150,17 @@ export class MediaCard {
 
     this.setPlayingState(snapshot.IsPlaying);
 
-    // 直接用快照里的播放位置起算：切歌 / 切回媒体时第一帧就是对的
-    const position = currentPosition(snapshot);
+    // 位置由调用方给（播放时钟算出来的），没给就退回快照里的采样值
+    const position = positionMs ?? currentPosition(snapshot);
     this.durationMs = snapshot.DurationMs;
     this.lastPositionMs = position;
     this.album = snapshot.AlbumTitle;
     this.positionText.textContent = formatTime(position);
     this.remainingText.textContent = formatRemaining(position, snapshot.DurationMs);
-    this.seekBar.setInteractable(snapshot.DurationMs > 0);
+    // 时长未知（直播流）或播放器实测不接受外部跳转时，进度条只展示不可拖
+    this.seekBar.setInteractable(snapshot.DurationMs > 0 && snapshot.Seekable !== false);
 
-    const key = trackKey(snapshot.Title, snapshot.Artist, snapshot.AlbumTitle);
+    const key = trackKeyOf(snapshot);
     if (key !== this.currentKey) {
       this.currentKey = key;
       this.restoreLyrics(key);
@@ -197,7 +193,7 @@ export class MediaCard {
    * 等切回该曲目时再立刻取用（媒体 → 收起 → 展开的来回切换因此不会丢歌词）。
    */
   setLyrics(snapshot: LyricsSnapshot): void {
-    const key = trackKey(snapshot.Title, snapshot.Artist, snapshot.AlbumTitle);
+    const key = trackKeyOf(snapshot);
     const text = snapshot.Lrc ?? (snapshot.LrcHex ? decodeLyricsHex(snapshot.LrcHex) : "");
     const lines = text.length > 0 ? parseLrc(text) : [];
 

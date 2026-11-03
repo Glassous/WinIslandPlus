@@ -5,7 +5,7 @@
 
 mod accent;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::IntoFuture;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -29,6 +29,8 @@ use crate::log;
 use crate::lyrics::LyricsService;
 
 pub const EVENT_MEDIA_CHANGED: &str = "media://changed";
+/// 轻量位置推送：只有数字，没有封面与文本，用于歌词 / 进度的实时对位。
+pub const EVENT_MEDIA_POSITION: &str = "media://position";
 
 /// 封面缓存上限。
 const ARTWORK_CACHE_LIMIT: usize = 8;
@@ -40,6 +42,12 @@ const POLL_IDLE_MS: u64 = 1000;
 const POLL_FAST_MS: u64 = 80;
 /// 控制指令后的高密度探测窗口（毫秒）。
 const COMMAND_FAST_WINDOW_MS: f64 = 1200.0;
+/// 位置快照的推送阈值：解码后的位置与上次推送相差超过它就再推一次。
+const POSITION_EMIT_DELTA_MS: f64 = 120.0;
+/// 跳转指令发出后，等多久再核对播放器是否真的跳到了目标位置。
+const SEEK_VERIFY_MS: f64 = 900.0;
+/// 核对的容差：跳转后位置与目标差这么多以内就算成功（播放中还会继续前进）。
+const SEEK_VERIFY_TOLERANCE_MS: f64 = 2_500.0;
 
 type Session = GlobalSystemMediaTransportControlsSession;
 type Manager = GlobalSystemMediaTransportControlsSessionManager;
@@ -66,6 +74,12 @@ pub struct MediaSnapshot {
     pub accent_color: Option<String>,
     /// 封面次色 `#RRGGBB`。
     pub accent_color_alt: Option<String>,
+    /// 播放器是否接受外部跳转。
+    ///
+    /// 一旦实测到「跳转指令发出去了、位置却没动」（部分应用不实现
+    /// `TryChangePlaybackPositionAsync`，或只在自身 UI 内生效），
+    /// 就对这个来源应用记一笔，前端据此禁用进度条拖动。
+    pub seekable: bool,
 }
 
 impl MediaSnapshot {
@@ -77,11 +91,133 @@ impl MediaSnapshot {
     }
 }
 
+/// 位置推送载荷（与前端 `PositionPayload` 对应）。
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "PascalCase")]
+pub struct PositionPayload {
+    pub position_ms: f64,
+    pub position_stamp_ms: f64,
+    pub duration_ms: f64,
+    pub is_playing: bool,
+}
+
 enum MediaCommand {
     TogglePlayPause,
     Next,
     Previous,
     Seek(i64),
+}
+
+/// 待核对的跳转指令。
+struct PendingSeek {
+    target_ms: f64,
+    /// 指令发出前的播放位置与采样时刻：用来判断「位置到底有没有为跳转动过」。
+    before_ms: f64,
+    before_stamp_ms: f64,
+    was_playing: bool,
+    /// 指令发出时的曲目键：换了歌就不作数。
+    track_key: String,
+    /// 来源应用标识（与 `unseekable` 的键一致）。
+    app_key: String,
+    deadline_ms: f64,
+}
+
+/// 「不接受外部跳转」的应用档案 + 待核对的跳转。
+#[derive(Default)]
+struct SeekTracker {
+    /// 实测不支持外部跳转的来源应用。
+    unseekable: HashSet<String>,
+    pending: Option<PendingSeek>,
+}
+
+impl SeekTracker {
+    fn is_seekable(&self, app_key: &str) -> bool {
+        // 拿不到应用标识时不作限制，宁可允许拖动也不要凭空空禁
+        app_key.is_empty() || !self.unseekable.contains(app_key)
+    }
+
+    /// 发出跳转指令：记下目标位置与发出前的基准位置。
+    fn note_command(&mut self, context: Option<&MediaSnapshot>, app_key: &str, target_ms: f64) {
+        if app_key.is_empty() {
+            self.pending = None;
+            return;
+        }
+
+        self.pending = Some(PendingSeek {
+            target_ms,
+            before_ms: context.map(|snapshot| snapshot.position_ms).unwrap_or(0.0),
+            before_stamp_ms: context
+                .map(|snapshot| snapshot.position_stamp_ms)
+                .unwrap_or_else(now_ms),
+            was_playing: context.map(|snapshot| snapshot.is_playing).unwrap_or(true),
+            track_key: context.map(|snapshot| snapshot.track_key()).unwrap_or_default(),
+            app_key: app_key.to_string(),
+            deadline_ms: now_ms() + SEEK_VERIFY_MS,
+        });
+    }
+
+    /// 播放器明确拒绝跳转（返回 false / 报错）：直接判定该应用不支持。
+    fn reject(&mut self, app_key: &str) {
+        self.pending = None;
+        if app_key.is_empty() {
+            return;
+        }
+        if self.unseekable.insert(app_key.to_string()) {
+            log::warn("media: 播放器拒绝外部进度跳转，已禁用该应用的拖动");
+        }
+    }
+
+    /// 核对上一次跳转是否真的生效；返回 true 表示刚刚判定为「不支持跳转」。
+    fn verify(&mut self, snapshot: &MediaSnapshot) -> bool {
+        let Some(pending) = self.pending.as_ref() else {
+            return false;
+        };
+
+        // 已经换歌：这次跳转的结果无从判断，不作数
+        if snapshot.track_key() != pending.track_key {
+            self.pending = None;
+            return false;
+        }
+
+        let drift = (snapshot.position_ms - pending.target_ms).abs();
+        if drift <= SEEK_VERIFY_TOLERANCE_MS {
+            // 位置已经到目标附近：跳转生效
+            self.pending = None;
+            return false;
+        }
+
+        if now_ms() < pending.deadline_ms {
+            return false;
+        }
+
+        let pending = self.pending.take().expect("pending 已判空");
+
+        // 不跳转时位置本该走到哪里：实际位置与它基本一致，才说明跳转真的没生效。
+        // 位置既没到目标、又明显动过的（比如播放器改了跳转语义）一律不下结论，
+        // 免得把「能拖但落点有偏差」的播放器误判成不支持。
+        let elapsed = if pending.was_playing {
+            (now_ms() - pending.before_stamp_ms).max(0.0)
+        } else {
+            0.0
+        };
+        let untouched = pending.before_ms + elapsed;
+        if (snapshot.position_ms - untouched).abs() > SEEK_VERIFY_TOLERANCE_MS {
+            return false;
+        }
+        // 目标本来就离「自然走到的位置」很近（只是微调几毫秒）：本身就没什么可验证的
+        if (pending.target_ms - untouched).abs() <= SEEK_VERIFY_TOLERANCE_MS {
+            return false;
+        }
+
+        if self.unseekable.insert(pending.app_key) {
+            log::warn(&format!(
+                "media: 跳转后位置未变化（目标偏差 {:.0}ms），已禁用该应用的拖动",
+                drift
+            ));
+            return true;
+        }
+        false
+    }
 }
 
 /// WinRT 异步操作 → 阻塞等待（媒体线程独占，不会卡 UI）。
@@ -200,6 +336,12 @@ fn run(
     let mut fast_until = 0.0f64;
     // 最近一次请求过歌词的曲目键（换歌时重新请求）。
     let mut last_lyrics_key = String::new();
+    // 跳转能力档案：哪些应用不接受外部跳转、哪次跳转还等着核对。
+    let mut seek = SeekTracker::default();
+    // 最近一次探测到的快照（跳转核对要拿它当「发出指令时的曲目」）。
+    let mut last_probe: Option<MediaSnapshot> = None;
+    // 上一次推送的实时位置（用于给前端持续对位，只在变化足够大时才推）。
+    let mut last_position_emit: Option<(f64, bool)> = None;
 
     loop {
         let playing = current
@@ -222,7 +364,7 @@ fn run(
                     manager = request_manager(&mut manager_retry_at);
                 }
                 if let Some(manager) = manager.as_ref() {
-                    apply_command(manager, command);
+                    apply_command(manager, command, &mut seek, last_probe.as_ref());
                     fast_until = now_ms() + COMMAND_FAST_WINDOW_MS;
                 }
             }
@@ -238,7 +380,14 @@ fn run(
             continue;
         };
 
-        let snapshot = probe(manager, &mut cache);
+        let mut snapshot = probe(manager, &mut cache, &seek);
+
+        // 跳转核对：指令发出后位置迟迟没跟上来 → 这个应用不接受外部跳转
+        if let Some(s) = snapshot.as_mut() {
+            if seek.verify(s) {
+                s.seekable = false;
+            }
+        }
 
         // 曲目变化（含首次出现媒体）时请求歌词；媒体消失则清空键，回来后重新请求。
         // 歌词服务自带缓存与去重，结果经 lyrics://changed 推送。
@@ -263,6 +412,7 @@ fn run(
                     || new.artwork_version != old.artwork_version
                     || (new.duration_ms - old.duration_ms).abs() > 300.0
                     || new.source_app_name != old.source_app_name
+                    || new.seekable != old.seekable
                     || (expected_position(old) - new.position_ms).abs() > 700.0
             }
             (Some(_), None) => true,
@@ -274,8 +424,38 @@ fn run(
 
         if should_emit {
             let _ = app.emit(EVENT_MEDIA_CHANGED, snapshot.clone());
-            last_emitted = snapshot;
+            last_emitted = snapshot.clone();
         }
+
+        // 轻量位置推送：不含封面与文本，可以高频发出。
+        // 前端用它给歌词 / 进度做实时对位——只靠整份快照的话，
+        // 播放位置在两次快照之间只能靠本地时钟外推，累积偏差会把整首歌的歌词顶偏。
+        if let Some(s) = snapshot.as_ref() {
+            let changed = match last_position_emit {
+                Some((position, playing)) => {
+                    s.is_playing != playing
+                        || (s.position_ms - position).abs() > POSITION_EMIT_DELTA_MS
+                }
+                None => true,
+            };
+
+            if changed {
+                last_position_emit = Some((s.position_ms, s.is_playing));
+                let _ = app.emit(
+                    EVENT_MEDIA_POSITION,
+                    PositionPayload {
+                        position_ms: s.position_ms,
+                        position_stamp_ms: s.position_stamp_ms,
+                        duration_ms: s.duration_ms,
+                        is_playing: s.is_playing,
+                    },
+                );
+            }
+        } else {
+            last_position_emit = None;
+        }
+
+        last_probe = snapshot;
     }
 
     log::info("media: 媒体线程已退出");
@@ -309,31 +489,51 @@ fn request_manager(retry_at: &mut f64) -> Option<Manager> {
     }
 }
 
-fn apply_command(manager: &Manager, command: MediaCommand) {
+fn apply_command(
+    manager: &Manager,
+    command: MediaCommand,
+    seek: &mut SeekTracker,
+    latest: Option<&MediaSnapshot>,
+) {
     let Some(session) = pick_session(manager) else {
         return;
     };
+
+    let app_key = session
+        .SourceAppUserModelId()
+        .map(|id| id.to_string())
+        .unwrap_or_default();
+    let is_seek = matches!(command, MediaCommand::Seek(_));
 
     let result = match command {
         MediaCommand::TogglePlayPause => session.TryTogglePlayPauseAsync().and_then(wait).map(|_| ()),
         MediaCommand::Next => session.TrySkipNextAsync().and_then(wait).map(|_| ()),
         MediaCommand::Previous => session.TrySkipPreviousAsync().and_then(wait).map(|_| ()),
-        // 跳转是唯一会「返回 false 但不算报错」的指令：播放器可以拒绝（超出范围 / 不支持跳转），
-        // 这时记一条日志，排查「拖了进度条但位置没变」时有据可依。
-        MediaCommand::Seek(ticks) => session
-            .TryChangePlaybackPositionAsync(ticks)
-            .and_then(wait)
-            .map(|changed| {
-                if !changed {
-                    log::warn(&format!(
-                        "media: 播放器未接受进度跳转 ticks={ticks}"
-                    ));
-                }
-            }),
+        // 跳转是唯一会「返回 false 但不算报错」的指令：播放器可以拒绝（超出范围 / 不支持跳转）。
+        // 这类应用之后一律不再允许拖动，免得用户反复拖一条推不动的进度条。
+        MediaCommand::Seek(ticks) => {
+            let target_ms = ticks as f64 / 10_000.0;
+
+            session
+                .TryChangePlaybackPositionAsync(ticks)
+                .and_then(wait)
+                .map(|changed| {
+                    if changed {
+                        // 返回 true 不代表真的跳了：记下目标位置，下一次探测再核对
+                        seek.note_command(latest, &app_key, target_ms);
+                    } else {
+                        log::warn(&format!("media: 播放器未接受进度跳转 ticks={ticks}"));
+                        seek.reject(&app_key);
+                    }
+                })
+        }
     };
 
     if let Err(err) = result {
         log::warn(&format!("media: 控制指令执行失败（{err}）"));
+        if is_seek {
+            seek.reject(&app_key);
+        }
     }
 }
 
@@ -371,7 +571,7 @@ fn pick_session(manager: &Manager) -> Option<Session> {
     fallback
 }
 
-fn probe(manager: &Manager, cache: &mut ArtworkCache) -> Option<MediaSnapshot> {
+fn probe(manager: &Manager, cache: &mut ArtworkCache, seek: &SeekTracker) -> Option<MediaSnapshot> {
     let session = pick_session(manager)?;
 
     let playback = session.GetPlaybackInfo().ok()?;
@@ -419,10 +619,11 @@ fn probe(manager: &Manager, cache: &mut ArtworkCache) -> Option<MediaSnapshot> {
         }
     };
 
-    let source_app = session
+    let app_id = session
         .SourceAppUserModelId()
-        .map(|id| display_name_for(&id.to_string()))
+        .map(|id| id.to_string())
         .unwrap_or_default();
+    let source_app = display_name_for(&app_id);
 
     Some(MediaSnapshot {
         title: display_title,
@@ -437,6 +638,7 @@ fn probe(manager: &Manager, cache: &mut ArtworkCache) -> Option<MediaSnapshot> {
         artwork_version: artwork.as_ref().map(|a| a.version).unwrap_or(0),
         accent_color: artwork.as_ref().map(|a| a.primary.clone()),
         accent_color_alt: artwork.as_ref().map(|a| a.secondary.clone()),
+        seekable: seek.is_seekable(&app_id),
     })
 }
 

@@ -7,7 +7,7 @@ import {
   rowOffsets,
 } from "../common/metrics";
 import { theme } from "../common/theme";
-import { currentPosition } from "../common/time";
+import { trackKeyOf } from "../common/time";
 import type {
   DshSnapshot,
   IslandMetrics,
@@ -15,10 +15,12 @@ import type {
   IslandSide,
   LyricsSnapshot,
   MediaSnapshot,
+  PositionPayload,
   ShapeRect,
 } from "../common/types";
 import { type ActorGeometry, type EasingKind, GeometryTween } from "./animator";
 import { MediaCard } from "./card";
+import { PlaybackClock } from "./clock";
 import { DshCardView } from "./dsh-card";
 import { DshPillView } from "./dsh-pill";
 import { CardGlow } from "./glow";
@@ -48,6 +50,13 @@ const dshPill = new DshPillView(dshActorEl);
 const dshCard = new DshCardView(dshActorEl);
 const glow = new CardGlow(document.getElementById("glowLayer")!);
 
+/**
+ * 播放时钟：歌词与进度都读它，不再直接线性外推快照。
+ * 后端约每 350 ms 推一次真值，时钟只「平滑吸收」小偏差，因此单次异常采样
+ * 不会把整首歌的歌词顶偏（详见 clock.ts）。
+ */
+const clock = new PlaybackClock();
+
 const mediaCard = new MediaCard(document.getElementById("mediaCard")!, {
   onPlayPause: () => {
     // 图标先乐观翻转（后端真实状态由快速轮询在百毫秒内送达并校正）
@@ -61,8 +70,9 @@ const mediaCard = new MediaCard(document.getElementById("mediaCard")!, {
     if (duration <= 0 || !media) return;
 
     const position = duration * fraction;
-    // 乐观推进本地快照：真实快照要等媒体线程下一次采样才回来，
+    // 乐观推进本地时钟与快照：真实快照要等媒体线程下一次采样才回来，
     // 这中间若继续按旧位置渲染，进度条与歌词会先弹回旧位置再跳过来。
+    clock.seek(position);
     media = { ...media, PositionMs: position, PositionStampMs: Date.now() };
     mediaCard.setProgress(position, duration);
     mediaCard.tickLyrics(position);
@@ -72,7 +82,7 @@ const mediaCard = new MediaCard(document.getElementById("mediaCard")!, {
     // 用户主动操作后 2 秒内不因"暂停"自动收起（由后端统一判断，这里只上报时间戳并刷新进度）
     void api.notifyUserActed();
     if (media && media.DurationMs > 0) {
-      const position = currentPosition(media);
+      const position = clock.position();
       mediaCard.setProgress(position, media.DurationMs);
       mediaCard.tickLyrics(position);
     }
@@ -363,8 +373,21 @@ function relayout(
 function renderMedia(snapshot: MediaSnapshot | null): void {
   media = snapshot;
 
+  if (snapshot) {
+    // 换歌 / 首次出现媒体：时钟按快照落位，卡片首帧的位置就是对的
+    clock.sync(
+      trackKeyOf(snapshot),
+      snapshot.PositionMs,
+      snapshot.PositionStampMs,
+      snapshot.IsPlaying,
+      snapshot.DurationMs,
+    );
+  } else {
+    clock.clear();
+  }
+
   mediaPill.setMedia(snapshot);
-  mediaCard.update(snapshot);
+  mediaCard.update(snapshot, clock.position());
   glow.setPalette(snapshot?.AccentColor ?? null, snapshot?.AccentColorAlt ?? null);
   glow.setActive(expanded === "media" && Boolean(snapshot?.ArtworkUrl));
 
@@ -489,6 +512,25 @@ function bindEvents(): void {
     renderMedia(snapshot ?? null);
   });
 
+  // 高频位置推送：给时钟持续喂真值。整份快照只在「变化明显」时才发，
+  // 只靠它的话两次快照之间只能本地外推，久了歌词就整首偏。
+  on<PositionPayload>(events.mediaPosition, (payload) => {
+    if (!media) return;
+
+    clock.sync(
+      trackKeyOf(media),
+      payload.PositionMs,
+      payload.PositionStampMs,
+      payload.IsPlaying,
+      payload.DurationMs,
+    );
+
+    if (expanded !== "media") return;
+    const duration = payload.DurationMs > 0 ? payload.DurationMs : media.DurationMs;
+    if (duration <= 0) return;
+    mediaCard.setProgress(clock.position(), duration);
+  });
+
   on<LyricsSnapshot>(events.lyricsChanged, (payload) => {
     mediaCard.setLyrics(payload);
   });
@@ -562,8 +604,17 @@ async function init(): Promise<void> {
   applyMetrics(metricsFor(boot.Settings.Size, boot.Settings.CustomPillWidth));
 
   // 首帧内容先写好，再一次性落位（tween 尚未初始化，会走 snap）
+  if (media) {
+    clock.sync(
+      trackKeyOf(media),
+      media.PositionMs,
+      media.PositionStampMs,
+      media.IsPlaying,
+      media.DurationMs,
+    );
+  }
   mediaPill.setMedia(media);
-  mediaCard.update(media);
+  mediaCard.update(media, clock.position());
   syncDshContent();
   glow.setPalette(media?.AccentColor ?? null, media?.AccentColorAlt ?? null);
 
@@ -595,12 +646,13 @@ function startShapeHeartbeat(): void {
 
 function startProgressLoop(): void {
   window.setInterval(() => {
-    if (!media || media.DurationMs <= 0) return;
-    const position = currentPosition(media);
+    if (!media) return;
+    const duration = media.DurationMs > 0 ? media.DurationMs : clock.durationMs;
+    const position = clock.position();
     // 歌词行不受展开限制：保证展开瞬间当前句已就位
     mediaCard.tickLyrics(position);
-    if (expanded !== "media") return;
-    mediaCard.setProgress(position, media.DurationMs);
+    if (expanded !== "media" || duration <= 0) return;
+    mediaCard.setProgress(position, duration);
   }, 80);
 }
 

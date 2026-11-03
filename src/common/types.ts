@@ -78,6 +78,26 @@ export interface MediaSnapshot {
   AccentColor: string | null;
   /** 封面次色 `#RRGGBB`。 */
   AccentColorAlt: string | null;
+  /**
+   * 播放器是否接受外部跳转。
+   *
+   * `false` 表示实测过「跳转指令发出去了、位置却没动」——这类应用的进度条
+   * 拖了也没反应，前端据此禁用拖动（仍正常显示进度）。
+   */
+  Seekable: boolean;
+}
+
+/**
+ * 高频位置推送（不含封面与文本，可以每几百毫秒发一次）。
+ *
+ * 歌词与进度靠它持续对位：只依赖整份快照的话，两次快照之间只能本地外推，
+ * 累积偏差会把整首歌的歌词顶偏。
+ */
+export interface PositionPayload {
+  PositionMs: number;
+  PositionStampMs: number;
+  DurationMs: number;
+  IsPlaying: boolean;
 }
 
 /** 某首歌的歌词检索结果（后端在线检索后推送；无歌词时 Lrc / LrcHex 均为 null）。 */
@@ -173,6 +193,7 @@ export const SETTINGS_LABEL = "settings";
 
 export const EVENTS = {
   mediaChanged: "media://changed",
+  mediaPosition: "media://position",
   lyricsChanged: "lyrics://changed",
   dshChanged: "dsh://changed",
   settingsChanged: "settings://changed",
