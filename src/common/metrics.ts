@@ -1,67 +1,51 @@
 import type { IslandMetrics, IslandSizePreset } from "./types";
 
 /**
- * DeepSeek Harness 相关尺寸（DIP），与 `src-tauri/src/metrics.rs` 逐值一致。
+ * 双岛布局相关尺寸（DIP），与 `src-tauri/src/metrics.rs` 逐值一致。
  *
- * - `DSH_ROW_HEIGHT`：展开卡片底部的 dsh 信息块高度（两行：阶段行 + 数据行）；
- *   窗口高度始终按「基础卡片 + 这一块」预留，dsh 出现时只让形状在内部生长。
- * - `DSH_PILL_MIN/MAX`：胶囊里 dsh 区的宽度区间（自适应内容后夹取）。
- * - `DSH_ONLY_CARD_HEIGHT`：没有媒体、只有 dsh 时的紧凑卡片高度。
+ * - `DSH_PILL_MIN/MAX`：dsh 胶囊的宽度区间（按内容自适应后夹取）；
+ * - `DSH_ONLY_CARD_HEIGHT`：dsh 独立展开卡片的高度；
+ * - `ROW_GAP`：胶囊行与卡片行之间的间距（展开的卡片长在「下一行」）。
  */
-export const DSH_ROW_HEIGHT = 66;
 export const DSH_PILL_MIN = 96;
 export const DSH_PILL_MAX = 132;
 export const DSH_ONLY_CARD_HEIGHT = 132;
-/** 胶囊左右内边距合计（与 `.pill { padding: 0 9px }` 对应）。 */
+/** 胶囊左右内边距合计（与 `.actor > .pill-layer { padding: 0 9px }` 对应）。 */
 export const PILL_PADDING = 18;
-/** 胶囊里媒体簇与 dsh 簇之间的间距（不再有分隔线）。 */
+/** 同一行内两个岛之间的间距。 */
 export const PILL_GAP = 8;
+/** 胶囊行与卡片行之间的间距。 */
+export const ROW_GAP = 8;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** dsh 内容在胶囊里允许的最大自然宽度（超过就折叠次要字段）。 */
+/** dsh 胶囊里允许的内容最大自然宽度（超过就折叠次要字段）。 */
 export function dshInnerMaxWidth(): number {
   return DSH_PILL_MAX - PILL_PADDING;
 }
 
 /**
- * 胶囊宽度：
- * - 没有 dsh：回到基础宽度（纯媒体态的「封面在左、波形在右」）；
- * - 媒体 + dsh：内边距 + 媒体簇实际宽度 + 间距 + dsh 内容宽度，按内容收紧。
- *   以前固定给 dsh 一个 96~132 的宽区，媒体簇再被拉伸填满剩余空间，
- *   结果封面和频谱之间空出一大块；
- * - 只有 dsh：dsh 自成胶囊，仍夹在 DSH_PILL_MIN~MAX 之间。
- * `dshInnerWidth` 为 0 表示没有 dsh 内容。
+ * dsh 胶囊宽度：内容自然宽度 + 左右内边距，夹在 `DSH_PILL_MIN`~`DSH_PILL_MAX`。
+ * `dshInnerWidth` 为 0 表示没有 dsh 内容（返回 0，调用方按"不显示 dsh 岛"处理）。
  */
-export function pillWidthFor(
+export function dshPillWidth(dshInnerWidth: number): number {
+  if (dshInnerWidth <= 0) return 0;
+  return clamp(dshInnerWidth + PILL_PADDING, DSH_PILL_MIN, DSH_PILL_MAX);
+}
+
+/** 胶囊行与卡片行在窗口内的纵向起点（DIP，贴底时整行镜像）。 */
+export function rowOffsets(
   m: IslandMetrics,
-  hasMedia: boolean,
-  dshInnerWidth: number,
-  mediaWidth = 0,
-): number {
-  if (dshInnerWidth <= 0) return m.PillWidth;
-  if (!hasMedia) {
-    return clamp(dshInnerWidth + PILL_PADDING, DSH_PILL_MIN, DSH_PILL_MAX);
+  bottomAnchored: boolean,
+): { pillY: number; cardY: number } {
+  const windowHeight = m.PillHeight + ROW_GAP + m.CardHeight;
+  if (bottomAnchored) {
+    // 卡片行在上、胶囊行贴窗口下沿
+    return { pillY: windowHeight - m.PillHeight, cardY: 0 };
   }
-  // +2：offsetWidth 取整后的零头，避免贴边的内容被 overflow 裁掉 1~2px
-  return Math.ceil(mediaWidth + PILL_PADDING + PILL_GAP + dshInnerWidth) + 2;
-}
-
-/** 展开卡片高度：dsh 行出现时追加一行，无媒体时回落到紧凑高度。 */
-export function cardHeightFor(
-  m: IslandMetrics,
-  hasMedia: boolean,
-  hasDsh: boolean,
-): number {
-  if (!hasMedia) return hasDsh ? DSH_ONLY_CARD_HEIGHT : m.CardHeight;
-  return m.CardHeight + (hasDsh ? DSH_ROW_HEIGHT : 0);
-}
-
-/** 窗口高度：始终预留 dsh 行，避免运行时改窗口尺寸产生空白帧。 */
-export function windowHeight(m: IslandMetrics, dshEnabled: boolean): number {
-  return m.CardHeight + (dshEnabled ? DSH_ROW_HEIGHT : 0);
+  return { pillY: 0, cardY: m.PillHeight + ROW_GAP };
 }
 
 /** 胶囊固定为 2:1（宽度是高度的两倍），展开态约 1.8:1。 */
@@ -115,16 +99,4 @@ function fromCustom(width: number): IslandMetrics {
     PillCorner: pillHeight / 2,
     CardCorner: Math.min(Math.max(cardHeight * 0.15, 22), 32),
   };
-}
-
-export function islandWidth(m: IslandMetrics, expanded: boolean): number {
-  return expanded ? m.CardWidth : m.PillWidth;
-}
-
-export function islandHeight(m: IslandMetrics, expanded: boolean): number {
-  return expanded ? m.CardHeight : m.PillHeight;
-}
-
-export function islandCorner(m: IslandMetrics, expanded: boolean): number {
-  return expanded ? m.CardCorner : m.PillCorner;
 }

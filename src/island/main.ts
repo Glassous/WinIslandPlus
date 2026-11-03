@@ -1,46 +1,53 @@
 import { api, events, on } from "../common/ipc";
-import { cardHeightFor, metricsFor, pillWidthFor } from "../common/metrics";
+import {
+  DSH_ONLY_CARD_HEIGHT,
+  PILL_GAP,
+  dshPillWidth,
+  metricsFor,
+  rowOffsets,
+} from "../common/metrics";
+import { theme } from "../common/theme";
 import { currentPosition } from "../common/time";
 import type {
   DshSnapshot,
   IslandMetrics,
   IslandSettings,
+  IslandSide,
   MediaSnapshot,
+  ShapeRect,
 } from "../common/types";
-import { IslandAnimator } from "./animator";
+import { type ActorGeometry, type EasingKind, GeometryTween } from "./animator";
 import { MediaCard } from "./card";
+import { DshCardView } from "./dsh-card";
+import { DshPillView } from "./dsh-pill";
 import { CardGlow } from "./glow";
-import { PillView } from "./pill";
+import { MediaPillView } from "./pill";
 
-const islandEl = document.getElementById("island")!;
-const pillEl = document.getElementById("pillView")!;
-const cardEl = document.getElementById("cardView")!;
+const stageEl = document.getElementById("stage")!;
+const mediaActorEl = document.getElementById("mediaActor")!;
+const dshActorEl = document.getElementById("dshActor")!;
+const mediaPillLayer = document.getElementById("mediaPillLayer")!;
+const mediaCardLayer = document.getElementById("mediaCardLayer")!;
+const dshPillLayer = document.getElementById("dshPillLayer")!;
+const dshCardLayer = document.getElementById("dshCardLayer")!;
 
-let settings: IslandSettings | null = null;
 let metrics: IslandMetrics = metricsFor("Medium", 68);
 let media: MediaSnapshot | null = null;
 let dsh: DshSnapshot | null = null;
 let dshEnabled = true;
-let expanded = false;
+/** 当前展开的岛；同一时刻最多一个。 */
+let expanded: IslandSide | null = null;
 let bottomAnchored = false;
 let dragEnabled = false;
+/** dsh 胶囊内容区的自然宽度（DIP），0 表示没有 dsh。 */
+let dshInnerWidth = 0;
 
-/**
- * 当前布局目标值。胶囊宽度与卡片高度会随 dsh 的出现 / 消失变化，
- * 单独抽出来，`onFrame` 里的透明度交叉淡化比才不会写死基础尺寸。
- */
-const layout = {
-  pillW: metrics.PillWidth,
-  cardW: metrics.CardWidth,
-  cardH: metrics.CardHeight,
-};
-
-const animator = new IslandAnimator();
-animator.onFrame = onFrame;
-
-const pill = new PillView(pillEl);
+const mediaPill = new MediaPillView(mediaActorEl);
+const dshPill = new DshPillView(dshActorEl);
+const dshCard = new DshCardView(dshActorEl);
 const glow = new CardGlow(document.getElementById("glowLayer")!);
-const card = new MediaCard(cardEl, {
+
+const mediaCard = new MediaCard(document.getElementById("mediaCard")!, {
   onPlayPause: () => void api.togglePlayPause(),
   onPrevious: () => void api.previous(),
   onNext: () => void api.next(),
@@ -53,10 +60,342 @@ const card = new MediaCard(cardEl, {
     // 用户主动操作后 2 秒内不因"暂停"自动收起（由后端统一判断，这里只上报时间戳并刷新进度）
     void api.notifyUserActed();
     if (media && media.DurationMs > 0) {
-      card.setProgress(currentPosition(media), media.DurationMs);
+      mediaCard.setProgress(currentPosition(media), media.DurationMs);
     }
   },
 });
+
+// ---------------- 双岛几何 ----------------
+
+/** 一帧里两个岛面的目标位置与可见性。 */
+interface LayoutTarget {
+  media: ActorGeometry;
+  dsh: ActorGeometry;
+  mediaVisible: boolean;
+  dshVisible: boolean;
+  /** 媒体岛是否收成正圆（两个岛并存且媒体未展开）。 */
+  mediaCircle: boolean;
+}
+
+const mediaTween = new GeometryTween();
+const dshTween = new GeometryTween();
+
+/** 当前布局目标（形状推送与命中判定都以它为准）。 */
+let target: LayoutTarget = {
+  media: { x: 0, y: 0, width: 0, height: 0, radius: 0, morph: 0 },
+  dsh: { x: 0, y: 0, width: 0, height: 0, radius: 0, morph: 0 },
+  mediaVisible: false,
+  dshVisible: false,
+  mediaCircle: false,
+};
+
+function hasDshContent(): boolean {
+  return dshEnabled && dsh !== null;
+}
+
+/**
+ * 解算两个岛面的目标几何（DIP，相对岛窗客户区）。
+ *
+ * 窗口按行切分：胶囊行贴屏幕边缘，卡片行在它内侧，中间隔 `ROW_GAP`。
+ * - 只有一个岛：胶囊 / 卡片都居中，与原来的单岛行为一致；
+ * - 两个都缩着：dsh 胶囊在左、媒体正圆在右，整组居中；
+ * - 展开：被展开者变成卡片长在卡片行，另一个留在胶囊行并居中；
+ *   此时胶囊行只剩一个岛，媒体回到普通胶囊形态（封面在左、频谱在右）。
+ */
+function computeLayout(): LayoutTarget {
+  const m = metrics;
+  const rows = rowOffsets(m, bottomAnchored);
+  const pillH = m.PillHeight;
+  const cardW = m.CardWidth;
+  const hasMedia = media !== null;
+  const hasDsh = hasDshContent();
+  const dshW = hasDsh ? Math.max(1, dshPillWidth(dshInnerWidth)) : 0;
+  const circle = pillH;
+
+  // 缺省：两个岛都以胶囊形态居中（只有一个时即为「保持现状」）
+  const mediaPill: ActorGeometry = {
+    x: (cardW - m.PillWidth) / 2,
+    y: rows.pillY,
+    width: m.PillWidth,
+    height: pillH,
+    radius: m.PillCorner,
+    morph: 0,
+  };
+  const dshPillTarget: ActorGeometry = {
+    x: (cardW - dshW) / 2,
+    y: rows.pillY,
+    width: dshW,
+    height: pillH,
+    radius: m.PillCorner,
+    morph: 0,
+  };
+  const mediaCircleTarget: ActorGeometry = {
+    x: (cardW - circle) / 2,
+    y: rows.pillY,
+    width: circle,
+    height: circle,
+    radius: circle / 2,
+    morph: 0,
+  };
+
+  let mediaTarget = mediaPill;
+  let dshTarget = dshPillTarget;
+
+  // 两个岛并存且都没展开：dsh 在左、媒体正圆在右
+  if (hasMedia && hasDsh && expanded === null) {
+    const groupW = dshW + PILL_GAP + circle;
+    const startX = (cardW - groupW) / 2;
+    dshTarget = { ...dshPillTarget, x: startX };
+    mediaTarget = { ...mediaCircleTarget, x: startX + dshW + PILL_GAP };
+  }
+
+  if (expanded === "media" && hasMedia) {
+    mediaTarget = {
+      x: 0,
+      y: rows.cardY,
+      width: cardW,
+      height: m.CardHeight,
+      radius: m.CardCorner,
+      morph: 1,
+    };
+  } else if (expanded === "dsh" && hasDsh) {
+    dshTarget = {
+      x: 0,
+      // 贴底时卡片行在上方，dsh 卡靠行的下沿（紧挨胶囊行）
+      y: rows.cardY + (bottomAnchored ? m.CardHeight - DSH_ONLY_CARD_HEIGHT : 0),
+      width: cardW,
+      height: DSH_ONLY_CARD_HEIGHT,
+      radius: m.CardCorner,
+      morph: 1,
+    };
+    // 胶囊行只剩媒体岛：回到「只有音乐播放时」的胶囊（封面在左、频谱在右），
+    // 已经由缺省的 mediaPill 居中，不需要再摆成正圆。
+  }
+
+  return {
+    media: mediaTarget,
+    dsh: dshTarget,
+    // 没有媒体也没有 dsh 时仍然显示一枚空胶囊（常驻行为）
+    mediaVisible: hasMedia || !hasDsh,
+    dshVisible: hasDsh,
+    // 只有两岛同排（都没展开）时媒体才收成正圆
+    mediaCircle: hasMedia && hasDsh && expanded === null,
+  };
+}
+
+// ---------------- 补间与渲染 ----------------
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+/** 把一条几何写进岛面：位置用 transform，尺寸 / 圆角直接写，两层按 morph 交叉淡化。 */
+function paintActor(
+  el: HTMLElement,
+  pillLayer: HTMLElement,
+  cardLayer: HTMLElement,
+  geometry: ActorGeometry,
+): void {
+  el.style.transform = `translate3d(${geometry.x}px, ${geometry.y}px, 0)`;
+  el.style.width = `${Math.max(0, geometry.width)}px`;
+  el.style.height = `${Math.max(0, geometry.height)}px`;
+  el.style.borderRadius = `${Math.max(0, geometry.radius)}px`;
+
+  // 胶囊层先淡出、卡片层后淡入：中途不会出现两层同时可见的糊影
+  const pillOpacity = clamp01(1 - geometry.morph * 2.2);
+  const cardOpacity = clamp01((geometry.morph - 0.45) / 0.55);
+
+  pillLayer.style.opacity = `${pillOpacity}`;
+  pillLayer.style.visibility = pillOpacity <= 0.01 ? "hidden" : "visible";
+  cardLayer.style.opacity = `${cardOpacity}`;
+  cardLayer.style.visibility = cardOpacity <= 0.01 ? "hidden" : "visible";
+}
+
+mediaTween.onFrame = (geometry) =>
+  paintActor(mediaActorEl, mediaPillLayer, mediaCardLayer, geometry);
+dshTween.onFrame = (geometry) =>
+  paintActor(dshActorEl, dshPillLayer, dshCardLayer, geometry);
+
+/** 后端命中判定用的形状（每帧最多推两块，值不变就不发）。 */
+let lastShapeKey = "";
+let frameHandle = 0;
+
+function toShapeRect(geometry: ActorGeometry): ShapeRect {
+  const scale = window.devicePixelRatio || 1;
+  return {
+    Left: Math.round(geometry.x * scale),
+    Top: Math.round(geometry.y * scale),
+    Width: Math.max(1, Math.round(geometry.width * scale)),
+    Height: Math.max(1, Math.round(geometry.height * scale)),
+    Radius: Math.max(0, Math.round(geometry.radius * scale)),
+  };
+}
+
+/** 展开态下胶囊行（整条卡片宽度）也算岛内，避免点击穿透与误判的「岛外点击」。 */
+function pillRowShape(): ShapeRect {
+  const rows = rowOffsets(metrics, bottomAnchored);
+  return toShapeRect({
+    x: 0,
+    y: rows.pillY,
+    width: metrics.CardWidth,
+    height: metrics.PillHeight,
+    radius: metrics.PillCorner,
+    morph: 0,
+  });
+}
+
+function flushShapes(): void {
+  const shapes: ShapeRect[] = [];
+  if (target.mediaVisible) shapes.push(toShapeRect(mediaTween.current));
+  if (target.dshVisible) shapes.push(toShapeRect(dshTween.current));
+  // 展开时胶囊行仍然是岛体的一部分：不补这块形状的话，卡片上方那条横带会被判成「岛外」，
+  // 点击会穿透到下面的窗口、并把卡片当成「岛外点击」收起来。
+  if (expanded !== null) shapes.push(pillRowShape());
+
+  const key = shapes
+    .map((r) => `${r.Left},${r.Top},${r.Width},${r.Height},${r.Radius}`)
+    .join("|");
+  if (key === lastShapeKey) return;
+
+  lastShapeKey = key;
+  void api.setShapes(shapes);
+}
+
+/** 静止状态下的整体重绘（snap 之后调用，保证形状与 DOM 一致）。 */
+function paintAll(): void {
+  paintActor(mediaActorEl, mediaPillLayer, mediaCardLayer, mediaTween.current);
+  paintActor(dshActorEl, dshPillLayer, dshCardLayer, dshTween.current);
+  flushShapes();
+}
+
+/** 两个岛面共用一条帧循环：同一时间戳、形状只推一次。 */
+function kick(): void {
+  if (frameHandle) return;
+  frameHandle = requestAnimationFrame(stepFrame);
+}
+
+function stepFrame(now: number): void {
+  frameHandle = 0;
+  const mediaActive = mediaTween.step(now);
+  const dshActive = dshTween.step(now);
+  flushShapes();
+  if (mediaActive || dshActive) kick();
+}
+
+function applyActorTarget(
+  tween: GeometryTween,
+  el: HTMLElement,
+  geometry: ActorGeometry,
+  visible: boolean,
+  animate: boolean,
+  durationMs: number,
+  easing: EasingKind,
+): void {
+  if (!visible) {
+    el.classList.remove("on");
+    return;
+  }
+
+  // 刚出现的岛面直接落位再淡入，避免从上一个位置的残影滑过来
+  const appearing = !el.classList.contains("on");
+  if (!animate || appearing || !tween.initialized) {
+    tween.snap(geometry);
+  } else {
+    tween.animate(geometry, durationMs, easing);
+  }
+  el.classList.add("on");
+}
+
+/**
+ * 重新解算并下发两个岛面的目标几何。
+ * 切换展开对象时两个岛面在同一调用里各自补间，天然同步。
+ */
+function relayout(
+  animate: boolean,
+  durationMs: number = theme.expandMs,
+  easing: EasingKind = "out",
+): void {
+  target = computeLayout();
+  mediaPill.setCircle(target.mediaCircle);
+
+  applyActorTarget(
+    mediaTween,
+    mediaActorEl,
+    target.media,
+    target.mediaVisible,
+    animate,
+    durationMs,
+    easing,
+  );
+  applyActorTarget(
+    dshTween,
+    dshActorEl,
+    target.dsh,
+    target.dshVisible,
+    animate,
+    durationMs,
+    easing,
+  );
+
+  if (mediaTween.isAnimating || dshTween.isAnimating) {
+    kick();
+  } else {
+    paintAll();
+  }
+}
+
+// ---------------- 内容同步 ----------------
+
+function renderMedia(snapshot: MediaSnapshot | null): void {
+  media = snapshot;
+
+  mediaPill.setMedia(snapshot);
+  mediaCard.update(snapshot);
+  glow.setPalette(snapshot?.AccentColor ?? null, snapshot?.AccentColorAlt ?? null);
+  glow.setActive(expanded === "media" && Boolean(snapshot?.ArtworkUrl));
+
+  // 媒体没了：媒体卡必须收起；dsh 岛若还在则继续留着
+  if (!snapshot && expanded === "media") {
+    setExpanded(null);
+    return;
+  }
+
+  relayout(true);
+}
+
+function syncDshContent(): void {
+  const active = hasDshContent() ? dsh : null;
+  dshInnerWidth = dshPill.setDsh(active);
+  dshCard.setDsh(active);
+}
+
+function setExpanded(next: IslandSide | null, animate = true): void {
+  if (next === "media" && !media) return;
+  if (next === "dsh" && !hasDshContent()) return;
+  if (expanded === next) return;
+
+  const wasAnyExpanded = expanded !== null;
+  expanded = next;
+
+  // 只在「有 ↔ 无展开」时通知后端：切换岛不重置前台窗口基线
+  if (wasAnyExpanded !== (next !== null)) {
+    void api.setExpanded(next !== null);
+  }
+
+  glow.setActive(next === "media" && Boolean(media?.ArtworkUrl));
+
+  relayout(
+    animate,
+    next === null ? theme.collapseMs : theme.expandMs,
+    next === null ? "inOut" : "out",
+  );
+}
+
+function toggleSide(side: IslandSide): void {
+  // 设置窗口打开期间岛体是"可拖动"状态，点击不再切换
+  if (dragEnabled) return;
+  setExpanded(expanded === side ? null : side);
+}
 
 // ---------------- 右键屏蔽 ----------------
 // 岛窗永不激活，WebView2 的默认上下文菜单会盖在胶囊 / 卡片上，
@@ -70,62 +409,7 @@ document.addEventListener(
   true,
 );
 
-// ---------------- 形状同步 ----------------
-
-let lastShape = { left: -1, top: -1, width: -1, height: -1, radius: -1 };
-
-function updateShape(widthDip: number, heightDip: number, cornerDip: number): void {
-  const scale = window.devicePixelRatio || 1;
-  const windowWidth = Math.max(1, Math.round(window.innerWidth * scale));
-  const windowHeight = Math.max(1, Math.round(window.innerHeight * scale));
-
-  const width = Math.max(1, Math.round(widthDip * scale));
-  const height = Math.max(1, Math.round(heightDip * scale));
-  const left = Math.max(0, Math.round((windowWidth - width) / 2));
-  const top = bottomAnchored ? Math.max(0, windowHeight - height) : 0;
-  const radius = Math.max(1, Math.round(cornerDip * scale));
-
-  if (
-    Math.abs(left - lastShape.left) < 1 &&
-    Math.abs(top - lastShape.top) < 1 &&
-    Math.abs(width - lastShape.width) < 1 &&
-    Math.abs(height - lastShape.height) < 1 &&
-    Math.abs(radius - lastShape.radius) < 1
-  ) {
-    return;
-  }
-
-  lastShape = { left, top, width, height, radius };
-  void api.setShape({ Left: left, Top: top, Width: width, Height: height, Radius: radius });
-}
-
-// ---------------- 动画帧 ----------------
-
-function onFrame(width: number, height: number, corner: number): void {
-  islandEl.style.width = `${width}px`;
-  islandEl.style.height = `${height}px`;
-  islandEl.style.borderRadius = `${corner}px`;
-
-  // 交叉淡化的分母用「当前布局」而不是基础尺寸：胶囊被 dsh 拉长后比例依然正确
-  const span = Math.max(1, layout.cardW - layout.pillW);
-  const t = Math.min(1, Math.max(0, (width - layout.pillW) / span));
-
-  const pillOpacity = Math.min(1, Math.max(0, 1 - t * 2.2));
-  const cardOpacity = Math.min(1, Math.max(0, (t - 0.45) / 0.55));
-
-  pillEl.style.opacity = `${pillOpacity}`;
-  pillEl.style.visibility = pillOpacity <= 0.01 ? "hidden" : "visible";
-
-  // 卡片跟随实时宽高一起生长：内容在生长的容器里重新布局，而不是被硬裁开
-  cardEl.style.width = `${width}px`;
-  cardEl.style.height = `${height}px`;
-  cardEl.style.opacity = `${cardOpacity}`;
-  cardEl.style.visibility = cardOpacity <= 0.01 ? "hidden" : "visible";
-
-  updateShape(width, height, corner);
-}
-
-// ---------------- 渲染 ----------------
+// ---------------- 尺寸变量 ----------------
 
 function applyMetrics(next: IslandMetrics): void {
   metrics = next;
@@ -134,168 +418,54 @@ function applyMetrics(next: IslandMetrics): void {
   root.setProperty("--pill-h", `${next.PillHeight}px`);
   root.setProperty("--card-w", `${next.CardWidth}px`);
   root.setProperty("--card-h", `${next.CardHeight}px`);
-}
-
-/** dsh 视图里参与展示的字段；只有它变化才重新测量宽度。 */
-function dshSignature(snapshot: DshSnapshot): string {
-  return [
-    snapshot.Stage,
-    snapshot.StageLabel,
-    snapshot.Model,
-    snapshot.Tool,
-    snapshot.AuthMode,
-    snapshot.TotalTokens,
-    snapshot.SessionCost,
-    snapshot.Currency,
-    snapshot.Balance,
-    snapshot.BalanceCurrency,
-  ].join("\u001f");
-}
-
-let currentPillSignature: string | null = null;
-let dshInnerWidth = 0;
-
-/**
- * 胶囊布局的相关状态：dsh 展示字段 + 媒体形态（有无媒体、有无封面）。
- * 封面出现 / 消失会改变媒体簇宽度，因此必须参与缓存键。
- */
-function pillSignature(active: DshSnapshot | null): string {
-  const mediaShape = `${media ? "m" : "-"}${media?.ArtworkUrl ? "a" : "-"}`;
-  return `${mediaShape}\u001e${active ? dshSignature(active) : ""}`;
-}
-
-/**
- * 把 dsh 内容写进胶囊与卡片，并返回胶囊里 dsh 簇的自然宽度。
- * 用签名缓存避免每次媒体进度变化都触发一次强制布局测量。
- */
-function syncDshViews(): number {
-  const hasMedia = media !== null;
-  const active = dshEnabled ? dsh : null;
-  const signature = pillSignature(active);
-
-  if (signature === currentPillSignature) {
-    return dshInnerWidth;
-  }
-
-  currentPillSignature = signature;
-
-  dshInnerWidth = pill.setDsh(active);
-  card.setDsh(active);
-  card.setMediaVisible(hasMedia);
-
-  return dshInnerWidth;
-}
-
-/** 重新解算布局目标：胶囊宽度 / 卡片高度都可能因 dsh 而变化。 */
-function rebuildLayout(animate: boolean, durationMs = 280): void {
-  const inner = syncDshViews();
-  const hasMedia = media !== null;
-
-  layout.cardW = metrics.CardWidth;
-  // 有 dsh 时按媒体簇的实际宽度收紧胶囊：媒体贴左、dsh 贴右，中间只有 gap
-  layout.pillW = pillWidthFor(metrics, hasMedia, inner, pill.mediaWidth());
-  layout.cardH = cardHeightFor(metrics, hasMedia, inner > 0);
-
-  // 光斑按百分比锚定在卡片边缘：卡片因 dsh 行变高时局部流光跟随拉伸
-  glow.setSize(layout.cardW, layout.cardH);
-
-  if (expanded) {
-    animateTo(layout.cardW, layout.cardH, metrics.CardCorner, animate, durationMs);
-  } else {
-    animateTo(layout.pillW, metrics.PillHeight, metrics.PillCorner, animate, 260);
-  }
-}
-
-/** 目标值与当前值一致时不动画，避免无谓的打断。 */
-function animateTo(
-  width: number,
-  height: number,
-  corner: number,
-  animate: boolean,
-  durationMs: number,
-): void {
-  if (!animate || animator.currentWidth <= 0) {
-    animator.snap(width, height, corner);
-    return;
-  }
-
-  const steady =
-    Math.abs(animator.currentWidth - width) < 0.5 &&
-    Math.abs(animator.currentHeight - height) < 0.5 &&
-    Math.abs(animator.currentCorner - corner) < 0.5;
-  if (steady) return;
-
-  animator.animate(width, height, corner, durationMs, "out");
-}
-
-function renderMedia(snapshot: MediaSnapshot | null): void {
-  media = snapshot;
-
-  pill.setMedia(snapshot);
-  card.update(snapshot);
-
-  glow.setPalette(snapshot?.AccentColor ?? null, snapshot?.AccentColorAlt ?? null);
-  glow.setActive(Boolean(snapshot?.ArtworkUrl) && expanded);
-
-  rebuildLayout(true);
-
-  // 媒体消失：只有在没有 dsh 可展示时才自动收起
-  if (!snapshot && expanded && !hasDshContent()) {
-    setExpanded(false);
-  }
-}
-
-function hasDshContent(): boolean {
-  return dshEnabled && dsh !== null;
-}
-
-function setExpanded(next: boolean, animate = true): void {
-  if (next && !media && !hasDshContent()) return;
-  if (expanded === next) return;
-
-  expanded = next;
-  void api.setExpanded(next);
-
-  cardEl.style.pointerEvents = next ? "auto" : "none";
-  pillEl.style.pointerEvents = next ? "none" : "auto";
-
-  glow.setActive(next && Boolean(media?.ArtworkUrl));
-
-  const width = next ? layout.cardW : layout.pillW;
-  const height = next ? layout.cardH : metrics.PillHeight;
-  const corner = next ? metrics.CardCorner : metrics.PillCorner;
-
-  if (animate) {
-    animator.animate(width, height, corner, next ? 300 : 240, next ? "out" : "inOut");
-  } else {
-    animator.snap(width, height, corner);
-  }
-}
-
-function toggleExpanded(): void {
-  if (!media && !hasDshContent()) return;
-  // 设置窗口打开期间岛体是"可拖动"状态，点击不再切换
-  if (dragEnabled) return;
-  setExpanded(!expanded);
+  root.setProperty("--dsh-card-h", `${DSH_ONLY_CARD_HEIGHT}px`);
 }
 
 // ---------------- 输入 ----------------
 
-let pointerDown = false;
+const actorElements: ReadonlyArray<readonly [IslandSide, HTMLElement]> = [
+  ["media", mediaActorEl],
+  ["dsh", dshActorEl],
+];
 
-islandEl.addEventListener("pointerdown", (event) => {
-  if (event.button !== 0) return;
-  pointerDown = true;
+let pressedSide: IslandSide | null = null;
+
+for (const [side, el] of actorElements) {
+  el.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    pressedSide = side;
+  });
+
+  el.addEventListener("pointerup", (event) => {
+    if (event.button !== 0 || pressedSide !== side) return;
+    pressedSide = null;
+    // 岛体自己处理掉的点击不再冒泡给舞台，避免「切换展开对象」又被当成空白处点击
+    event.stopPropagation();
+    toggleSide(side);
+  });
+
+  el.addEventListener("pointercancel", () => {
+    pressedSide = null;
+  });
+}
+
+/**
+ * 展开态下点击岛体空白处（胶囊行那条横带）＝收起。
+ *
+ * 只认「按下也落在空白舞台上」的那一次点击：卡片里的按钮 / 进度条都会阻止冒泡，
+ * 进度条拖到卡片外松手也不会误收起。
+ */
+let stagePressAt = 0;
+
+stageEl.addEventListener("pointerdown", (event) => {
+  stagePressAt = event.target === stageEl ? performance.now() : 0;
 });
 
-islandEl.addEventListener("pointerup", (event) => {
-  if (event.button !== 0 || !pointerDown) return;
-  pointerDown = false;
-  toggleExpanded();
-});
-
-islandEl.addEventListener("pointercancel", () => {
-  pointerDown = false;
+stageEl.addEventListener("pointerup", (event) => {
+  const onBlank = stagePressAt > 0 && performance.now() - stagePressAt < 1000;
+  stagePressAt = 0;
+  if (!onBlank || event.button !== 0 || dragEnabled || expanded === null) return;
+  setExpanded(null);
 });
 
 // ---------------- 事件订阅 ----------------
@@ -307,20 +477,24 @@ function bindEvents(): void {
 
   on<DshSnapshot | null>(events.dshChanged, (snapshot) => {
     dsh = snapshot ?? null;
-    rebuildLayout(true);
+    syncDshContent();
 
-    if (!dsh && expanded && !media) {
-      setExpanded(false);
+    if (!hasDshContent() && expanded === "dsh") {
+      setExpanded(null);
+      return;
     }
+
+    relayout(true);
   });
 
   on<IslandSettings>(events.settingsChanged, (next) => {
-    settings = next;
     dshEnabled = next.DshEnabled !== false;
+    syncDshContent();
 
     const updated = metricsFor(next.Size, next.CustomPillWidth);
     const sizeChanged =
       updated.PillWidth !== metrics.PillWidth ||
+      updated.PillHeight !== metrics.PillHeight ||
       updated.CardWidth !== metrics.CardWidth ||
       updated.CardHeight !== metrics.CardHeight ||
       updated.PillCorner !== metrics.PillCorner ||
@@ -331,18 +505,23 @@ function bindEvents(): void {
     const bottom = next.BottomAnchored || next.Placement === "BottomCenter";
     if (bottom !== bottomAnchored) {
       bottomAnchored = bottom;
-      islandEl.classList.toggle("bottom", bottom);
+      stageEl.classList.toggle("bottom", bottom);
     }
 
-    // 尺寸档位变化直接落位；只有 dsh 引起的宽高变化才走缓动
-    rebuildLayout(!sizeChanged);
+    if (!hasDshContent() && expanded === "dsh") {
+      setExpanded(null, !sizeChanged);
+      return;
+    }
+
+    // 尺寸档位变化直接落位；只有展开 / 内容引起的几何变化才走缓动
+    relayout(!sizeChanged);
   });
 
-  on<string>(events.collapse, () => setExpanded(false));
+  on<string>(events.collapse, () => setExpanded(null));
 
   on<boolean>(events.visibility, (visible) => {
     if (!visible) {
-      setExpanded(false, false);
+      setExpanded(null, false);
     }
   });
 
@@ -356,31 +535,50 @@ function bindEvents(): void {
 async function init(): Promise<void> {
   const boot = await api.bootstrap();
 
-  settings = boot.Settings;
   dshEnabled = boot.Settings.DshEnabled !== false;
   dsh = boot.Dsh ?? null;
+  media = boot.Media ?? null;
   bottomAnchored = boot.BottomAnchored || boot.Settings.Placement === "BottomCenter";
-  islandEl.classList.toggle("bottom", bottomAnchored);
+  stageEl.classList.toggle("bottom", bottomAnchored);
 
   applyMetrics(metricsFor(boot.Settings.Size, boot.Settings.CustomPillWidth));
 
-  islandEl.style.opacity = "0";
-  // 首帧直接用 renderMedia 走一遍完整布局（animator 尚未有当前值，会走 snap）
-  renderMedia(boot.Media ?? null);
+  // 首帧内容先写好，再一次性落位（tween 尚未初始化，会走 snap）
+  mediaPill.setMedia(media);
+  mediaCard.update(media);
+  syncDshContent();
+  glow.setPalette(media?.AccentColor ?? null, media?.AccentColorAlt ?? null);
+
+  document.body.style.opacity = "0";
+  relayout(false);
 
   bindEvents();
   startProgressLoop();
+  startShapeHeartbeat();
 
   // 首帧样式已经写进 DOM：直接点亮并请求显示窗口。
   // 注意不能用 requestAnimationFrame 等待——窗口在显示前不会调度动画帧，会死锁。
-  islandEl.style.opacity = "1";
+  document.body.style.opacity = "1";
   await api.islandReady();
+}
+
+/**
+ * 形状心跳：每 500 ms 无条件重推一次当前形状。
+ *
+ * 命中区域完全靠前端推来的矩形，任何一次推送丢失（IPC 抖动）都会让判定停在旧位置——
+ * 表现就是「同一块地方时灵时不灵」。这里定期清掉去重键，保证后端最多落后半秒。
+ */
+function startShapeHeartbeat(): void {
+  window.setInterval(() => {
+    lastShapeKey = "";
+    flushShapes();
+  }, 500);
 }
 
 function startProgressLoop(): void {
   window.setInterval(() => {
-    if (!expanded || !media || media.DurationMs <= 0) return;
-    card.setProgress(currentPosition(media), media.DurationMs);
+    if (expanded !== "media" || !media || media.DurationMs <= 0) return;
+    mediaCard.setProgress(currentPosition(media), media.DurationMs);
   }, 80);
 }
 

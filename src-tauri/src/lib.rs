@@ -96,7 +96,7 @@ pub fn run() {
             commands::bootstrap,
             commands::app_info,
             commands::island_ready,
-            commands::set_island_shape,
+            commands::set_island_shapes,
             commands::set_expanded,
             commands::set_dragging,
             commands::notify_user_acted,

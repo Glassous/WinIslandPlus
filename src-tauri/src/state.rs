@@ -27,8 +27,8 @@ pub struct Runtime {
     pub work: WorkArea,
     pub scale: f64,
     pub anchor: Anchor,
-    /// 岛体形状（相对窗口客户区的物理像素）。
-    pub shape: ShapeRect,
+    /// 岛面形状（相对窗口客户区的物理像素）：媒体岛、dsh 岛，展开时再加一条胶囊行横带。
+    pub shapes: Vec<ShapeRect>,
     /// 窗口客户区原点（屏幕物理像素）。
     pub window_origin: (i32, i32),
     pub expanded: bool,
@@ -40,6 +40,8 @@ pub struct Runtime {
     /// 展开时的前台窗口（用于"切走即收起"）。
     pub foreground_before_expand: Hwnd,
     pub any_button_down: bool,
+    /// 最近一次展开的时刻（用于岛外点击的宽限期）。
+    pub expanded_at_ms: f64,
     /// 光标离开岛体的起始时刻（0 表示当前在岛内）。
     pub idle_since_ms: f64,
     /// 上一次媒体播放状态，用于检测"播放 → 暂停"的瞬间。
@@ -68,7 +70,7 @@ impl Default for Runtime {
                 edge_y: 0.0,
                 bottom_anchored: false,
             },
-            shape: ShapeRect::default(),
+            shapes: Vec::new(),
             window_origin: (0, 0),
             expanded: false,
             drag_enabled: false,
@@ -78,6 +80,7 @@ impl Default for Runtime {
             ignore_cursor: false,
             foreground_before_expand: 0,
             any_button_down: false,
+            expanded_at_ms: 0.0,
             idle_since_ms: 0.0,
             last_playing: None,
             last_user_action_ms: 0.0,
@@ -136,7 +139,7 @@ impl Shared {
             bottom_anchored: guard.bottom_anchored,
             scale: guard.scale,
             anchor: guard.anchor,
-            shape: guard.shape,
+            shapes: guard.shapes.clone(),
             window_origin: guard.window_origin,
             work: guard.work,
             expanded: guard.expanded,
@@ -173,7 +176,7 @@ impl Shared {
         self.apply_placement(app);
     }
 
-    /// 按当前锚点与卡片尺寸摆放窗口（窗口尺寸固定为展开态，形状在内部动画）。
+    /// 按当前锚点与卡片尺寸摆放窗口（窗口尺寸固定为「胶囊行 + 间距 + 卡片行」，形状在内部动画）。
     pub fn apply_placement(&self, _app: &AppHandle) {
         let hwnd = self.hwnd();
         if hwnd == 0 {
@@ -182,11 +185,10 @@ impl Shared {
 
         let snapshot = self.snapshot();
         let scale = snapshot.scale;
-        let dsh_enabled = self.settings.current().dsh_enabled;
 
         let window_width = (snapshot.metrics.card_width * scale).round().max(1.0) as i32;
-        // 高度始终预留 dsh 信息行：dsh 出现时只让形状在窗口内生长，不改窗口尺寸
-        let window_height = (snapshot.metrics.window_height(dsh_enabled) * scale)
+        // 高度恒定：展开的卡片长在胶囊行的下一行，窗口本身不改尺寸
+        let window_height = (snapshot.metrics.window_height() * scale)
             .round()
             .max(1.0) as i32;
 
@@ -259,26 +261,22 @@ impl Shared {
         } else {
             0
         };
-        let any_button_down = if expanded {
-            crate::interop::is_any_mouse_button_down()
-        } else {
-            false
-        };
+        let now = now_ms();
 
         self.with_runtime(|runtime| {
             runtime.expanded = expanded;
             runtime.foreground_before_expand = foreground;
-            runtime.any_button_down = any_button_down;
+            // 展开这一下本身就是一次按下：基线置为「按住」，必须先松手再按下才算岛外点击，
+            // 否则打开卡片的那次点击会被误判成岛外点击、卡片刚出来就被收起。
+            runtime.any_button_down = expanded;
+            runtime.expanded_at_ms = if expanded { now } else { 0.0 };
             runtime.idle_since_ms = 0.0;
         });
     }
 
     /// 用户主动操作了卡片：2 秒内不因"暂停"自动收起。
     pub fn note_user_action(&self) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as f64)
-            .unwrap_or(0.0);
+        let now = now_ms();
         self.with_runtime(|runtime| runtime.last_user_action_ms = now);
     }
 
@@ -291,14 +289,25 @@ impl Shared {
     }
 }
 
+/// 当前时刻（毫秒，与轮询器同名函数同一基准）。
+fn now_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0)
+}
+
 /// 运行时状态的只读快照（避免长时间持锁）。
-#[derive(Clone, Copy, Debug)]
+///
+/// 形状是变长的（最多两块），所以这里只实现 `Clone`——竞态下也不要紧：
+/// 快照只是一帧的拍照，轮询器下一帧会重新取。
+#[derive(Clone, Debug)]
 pub struct RuntimeSnapshot {
     pub metrics: IslandMetrics,
     pub bottom_anchored: bool,
     pub scale: f64,
     pub anchor: Anchor,
-    pub shape: ShapeRect,
+    pub shapes: Vec<ShapeRect>,
     pub window_origin: (i32, i32),
     pub work: WorkArea,
     pub expanded: bool,

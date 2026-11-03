@@ -40,8 +40,6 @@ export class CardGlow {
 
   private readonly layer: HTMLElement;
   private readonly blobs: Blob[] = [];
-  private lastWidth = 0;
-  private lastHeight = 0;
   private flowing = false;
   private visible = false;
   private primary: string | null = null;
@@ -70,23 +68,6 @@ export class CardGlow {
       this.blobs.push({ el, flow, core, size: source.size });
       this.place(index);
     });
-  }
-
-  /**
-   * 跟随卡片实时尺寸：卡片因 dsh 行变高时光源仍然贴着卡片边缘。
-   * 尺寸没变化时不做任何写入。
-   */
-  setSize(width: number, height: number): void {
-    if (
-      Math.abs(width - this.lastWidth) < 0.5 &&
-      Math.abs(height - this.lastHeight) < 0.5
-    ) {
-      return;
-    }
-    this.lastWidth = width;
-    this.lastHeight = height;
-    this.layer.style.width = `${width}px`;
-    this.layer.style.height = `${height}px`;
   }
 
   /** 按百分比把一个光源摆到卡片上（transform 留给流光动画）。 */

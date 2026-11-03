@@ -113,7 +113,12 @@ export interface DshSnapshot {
   UpdatedAtMs: number;
 }
 
-/** 岛体当前可见形状（相对窗口客户区的物理像素）。 */
+/**
+ * 岛面当前可见形状（相对窗口客户区的物理像素）。
+ *
+ * 媒体岛与 dsh 岛各自一块：胶囊态两块都是胶囊（媒体也可能是正圆，用 Radius 表达），
+ * 展开时一块是卡片、另一块是留在胶囊行里的胶囊。
+ */
 export interface ShapeRect {
   Left: number;
   Top: number;
@@ -122,6 +127,9 @@ export interface ShapeRect {
   /** 圆角半径（物理像素）。 */
   Radius: number;
 }
+
+/** 两个岛面：媒体岛与 DeepSeek Harness 岛。 */
+export type IslandSide = "media" | "dsh";
 
 /** 岛窗首帧渲染完成后拉取的一次性状态。 */
 export interface Bootstrap {

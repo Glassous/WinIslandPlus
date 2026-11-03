@@ -22,8 +22,11 @@ export const api = {
   bootstrap: () => call<Bootstrap>("bootstrap"),
   islandReady: () => call<void>("island_ready"),
 
-  /** 每帧把当前可见形状推给后端（坐标：相对窗口客户区的物理像素）。 */
-  setShape: (rect: ShapeRect) => call<void>("set_island_shape", { rect }),
+  /**
+   * 每帧把当前可见形状推给后端（坐标：相对窗口客户区的物理像素）。
+   * 两个岛面最多各一块：命中判定为「任一矩形包含光标」。
+   */
+  setShapes: (shapes: ShapeRect[]) => call<void>("set_island_shapes", { shapes }),
   setExpanded: (expanded: boolean) => call<void>("set_expanded", { expanded }),
   /** 收起后通知后端复位形状（避免残留圆角判定）。 */
   setDragging: (dragging: boolean) => call<void>("set_dragging", { dragging }),

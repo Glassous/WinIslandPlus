@@ -24,12 +24,11 @@ pub struct IslandMetrics {
     pub card_corner: f64,
 }
 
-/// 展开卡片底部 DeepSeek Harness 信息块的高度（DIP，两行）。
+/// 胶囊行与卡片行之间的间距（DIP）。
 ///
-/// 与 `src/common/metrics.ts` 的 `DSH_ROW_HEIGHT` 保持一致。
-/// 窗口高度在 dsh 集成开启时始终预留这一块：dsh 出现只让形状在窗口内生长，
-/// 不会出现「窗口先放大、内容后跟上」的空白帧。
-pub const DSH_ROW_HEIGHT: f64 = 66.0;
+/// 与 `src/common/metrics.ts` 的 `ROW_GAP` 保持一致：展开的卡片长在「胶囊行的下一行」，
+/// 两行之间的这一条始终透明并参与形状命中判定（判定按两块实际形状分别计算）。
+pub const ROW_GAP: f64 = 8.0;
 
 impl IslandMetrics {
     /// 胶囊固定为 2:1（宽度是高度的两倍）；展开态约 1.8:1。
@@ -84,8 +83,11 @@ impl IslandMetrics {
         }
     }
 
-    /// 岛窗高度：基础卡片高度 + （dsh 集成开启时）dsh 信息行高度。
-    pub fn window_height(&self, dsh_enabled: bool) -> f64 {
-        self.card_height + if dsh_enabled { DSH_ROW_HEIGHT } else { 0.0 }
+    /// 岛窗高度：胶囊行 + 间距 + 卡片行。
+    ///
+    /// 两个岛面（媒体 / dsh）各自在自己的行里生长，窗口尺寸因此恒定，
+    /// 展开 / 收起只改变内部形状，不会出现「窗口先放大、内容后跟上」的空白帧。
+    pub fn window_height(&self) -> f64 {
+        self.pill_height + ROW_GAP + self.card_height
     }
 }

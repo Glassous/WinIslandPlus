@@ -87,9 +87,14 @@ pub fn island_ready(app: AppHandle, state: State<'_, SharedState>) {
     state.sync_visibility(&app);
 }
 
+/// 前端每帧推来的可见形状：媒体岛、dsh 岛，展开时再加一条胶囊行横带。
+///
+/// 多于四块时截断：布局里本来就只有这些块，多出来的只可能是异常数据。
 #[tauri::command]
-pub fn set_island_shape(state: State<'_, SharedState>, rect: ShapeRect) {
-    state.with_runtime(|runtime| runtime.shape = rect);
+pub fn set_island_shapes(state: State<'_, SharedState>, shapes: Vec<ShapeRect>) {
+    let mut shapes = shapes;
+    shapes.truncate(4);
+    state.with_runtime(|runtime| runtime.shapes = shapes);
 }
 
 #[tauri::command]

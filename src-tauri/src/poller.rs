@@ -18,6 +18,9 @@ use crate::placement;
 use crate::state::{SharedState, EVENT_COLLAPSE};
 use crate::window;
 
+/// 展开后的「岛外点击」宽限期：这段时间内不因为按下位置在形状外而收起。
+const EXPAND_GRACE_MS: f64 = 260.0;
+
 pub fn start(app: AppHandle, state: Arc<crate::state::Shared>) {
     std::thread::Builder::new()
         .name("winisland-poller".into())
@@ -45,7 +48,8 @@ fn tick(app: &AppHandle, state: &SharedState) {
     let snapshot = state.snapshot();
     let local_x = (cursor_x - snapshot.window_origin.0) as f64;
     let local_y = (cursor_y - snapshot.window_origin.1) as f64;
-    let inside = snapshot.shape.contains(local_x, local_y);
+    // 两个岛面各一块形状：光标落在任意一块上就算在岛内
+    let inside = placement::contains_any(&snapshot.shapes, local_x, local_y);
 
     ensure_visible(hwnd, state);
     update_click_through(state, inside);
@@ -165,8 +169,11 @@ fn watch_expanded(app: &AppHandle, state: &SharedState, inside: bool) {
 
     let any_down = interop::is_any_mouse_button_down();
     let last = state.with_runtime(|runtime| runtime.any_button_down);
+    // 刚展开的一瞬间，形状还在从胶囊长成卡片，光标多半还停在胶囊行（此时不在卡片里）：
+    // 这段窗口期内的按下不算岛外点击，否则卡片会「刚打开就收起」。
+    let since_expand = now_ms() - state.with_runtime(|runtime| runtime.expanded_at_ms);
 
-    if any_down && !last && !inside {
+    if any_down && !last && !inside && since_expand > EXPAND_GRACE_MS {
         state.with_runtime(|runtime| runtime.any_button_down = any_down);
         collapse(app, state, "outside-click");
         return;

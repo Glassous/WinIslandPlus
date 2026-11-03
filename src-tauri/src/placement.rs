@@ -57,6 +57,14 @@ impl ShapeRect {
     }
 }
 
+/// 多块形状的命中判定：任一形状包含光标即为命中。
+///
+/// 胶囊态最多两块（媒体岛 + dsh 岛），展开时是「卡片 + 留在胶囊行里的另一个岛」；
+/// 空数组表示当前没有任何可见形状，调用方应按全穿透处理。
+pub fn contains_any(shapes: &[ShapeRect], x: f64, y: f64) -> bool {
+    shapes.iter().any(|shape| shape.contains(x, y))
+}
+
 /// 显示器工作区的物理像素描述。
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WorkArea {
