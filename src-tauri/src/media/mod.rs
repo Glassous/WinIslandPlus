@@ -318,10 +318,18 @@ fn apply_command(manager: &Manager, command: MediaCommand) {
         MediaCommand::TogglePlayPause => session.TryTogglePlayPauseAsync().and_then(wait).map(|_| ()),
         MediaCommand::Next => session.TrySkipNextAsync().and_then(wait).map(|_| ()),
         MediaCommand::Previous => session.TrySkipPreviousAsync().and_then(wait).map(|_| ()),
+        // 跳转是唯一会「返回 false 但不算报错」的指令：播放器可以拒绝（超出范围 / 不支持跳转），
+        // 这时记一条日志，排查「拖了进度条但位置没变」时有据可依。
         MediaCommand::Seek(ticks) => session
             .TryChangePlaybackPositionAsync(ticks)
             .and_then(wait)
-            .map(|_| ()),
+            .map(|changed| {
+                if !changed {
+                    log::warn(&format!(
+                        "media: 播放器未接受进度跳转 ticks={ticks}"
+                    ));
+                }
+            }),
     };
 
     if let Err(err) = result {

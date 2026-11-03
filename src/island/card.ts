@@ -307,8 +307,9 @@ export class MediaCard {
 
     const finish = () => {
       this.cancelLyricRoll();
+      // 归位时由 snap 直接把当前句的高亮写到位，不再走 paintProgress
+      // （否则会从上一句残留的进度过渡一次，表现为「先整句点亮再缩回去」）
       this.snap(current, next);
-      this.paintProgress(this.lyricProgress);
     };
 
     const onEnd = (event: TransitionEvent) => {
@@ -336,8 +337,12 @@ export class MediaCard {
     this.setText(this.lyricRows[1], next);
     this.lyricRows[0].line.classList.add("is-current");
     this.lyricRows[1].line.classList.remove("is-current");
-    this.lyricRows[1].fill.style.clipPath = "inset(0 100% 0 0)";
     this.activeRow = 0;
+
+    // 文本换人时必须同步重置高亮层：否则新句会继承上一句的 clip-path（往往已经接近满格），
+    // 表现为「先整句点亮，再退回正确位置」。这里关掉过渡直接写入，避免吃到 CSS 过渡。
+    this.paintProgress(this.lyricProgress, this.lyricRows[0], true);
+    this.resetFill(this.lyricRows[1]);
 
     this.lyricRoll.classList.add("snap");
     this.lyricRoll.style.transform = "translateY(0)";
@@ -351,14 +356,39 @@ export class MediaCard {
     row.fill.textContent = text;
   }
 
-  /** 句内进度：只用 clip-path 从左侧露出「已唱」高亮层。 */
-  private paintProgress(progress: number): void {
-    this.lyricProgress = progress;
-    const row = this.lyricRows[this.activeRow];
+  /**
+   * 句内进度：只用 clip-path 从左侧露出「已唱」高亮层。
+   *
+   * `immediate` 为 true 时先关掉过渡再写入——换句 / 跳转时用，
+   * 否则新的 clip-path 会从上一句残留的值补间过来（看起来像「先点亮再退回」）。
+   */
+  private paintProgress(
+    progress: number,
+    row: LyricRow | undefined = this.lyricRows[this.activeRow],
+    immediate = false,
+  ): void {
+    this.lyricProgress = clamp01(progress);
     if (!row) return;
 
-    const percentage = Math.min(1, Math.max(0, progress)) * 100;
-    row.fill.style.clipPath = `inset(0 ${(100 - percentage).toFixed(2)}% 0 0)`;
+    const clip = clipFor(this.lyricProgress);
+    if (!immediate) {
+      row.fill.style.clipPath = clip;
+      return;
+    }
+
+    row.fill.style.transition = "none";
+    row.fill.style.clipPath = clip;
+    // 强制回流：让这次写入成为新的过渡起点，而不是被 CSS 过渡补间
+    void row.fill.offsetWidth;
+    row.fill.style.removeProperty("transition");
+  }
+
+  /** 把一行的高亮层直接收成「一点没唱」（不走过渡，也不影响当前句的进度值）。 */
+  private resetFill(row: LyricRow): void {
+    row.fill.style.transition = "none";
+    row.fill.style.clipPath = clipFor(0);
+    void row.fill.offsetWidth;
+    row.fill.style.removeProperty("transition");
   }
 
   /** 清空歌词；有专辑名时以弱化样式占位，否则整行隐藏。 */
@@ -380,8 +410,8 @@ export class MediaCard {
     this.setText(this.lyricRows[1], "");
     this.lyricRows[0].line.classList.add("is-current");
     this.lyricRows[1].line.classList.remove("is-current");
-    this.lyricRows[0].fill.style.clipPath = "inset(0 100% 0 0)";
-    this.lyricRows[1].fill.style.clipPath = "inset(0 100% 0 0)";
+    this.resetFill(this.lyricRows[0]);
+    this.resetFill(this.lyricRows[1]);
 
     this.lyricRoll.classList.add("snap");
     this.lyricRoll.style.transform = "translateY(0)";
@@ -433,4 +463,14 @@ export class MediaCard {
 /** 空句（间奏）显示音符，避免歌词区空一大块。 */
 function displayText(line: LyricLine): string {
   return line.text.length > 0 ? line.text : "♪";
+}
+
+/** 句内进度 → 高亮层的 clip-path：从左侧露出 progress 比例。 */
+function clipFor(progress: number): string {
+  return `inset(0 ${((1 - clamp01(progress)) * 100).toFixed(2)}% 0 0)`;
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
 }

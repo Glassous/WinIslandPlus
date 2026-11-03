@@ -113,39 +113,119 @@ body.island-body {
 }
 
 /*
- * 底部整条光带：铺满卡片宽度、贴着底沿向上照射，向上逐渐变暗（渐变由 JS 按
- * 封面主 / 次色写入）。主光带较高（76%），次色叠加较矮（48%），
- * 两层以错开的周期做呼吸（缩放原点固定在底沿，光始终从底部"长"出来）。
+ * 流光：像「被封面染色的玻璃」而不是一条打光——
+ * 垫一层斜向整卡色调（.glow-tint），叠两团缓慢漂移的柔光（.glow-bloom / -alt），
+ * 最上面一道极淡的斜向高光（.glow-sheen）慢慢扫过。
+ * 各层的位置刻意超出卡片边界，靠 .actor 的圆角裁切收边，光看起来是从卡片内里透出来的。
+ * 渐变的颜色 / 浓淡全部由 glow.ts 按封面主 / 次色写入。
  */
-.glow-beam,
-.glow-beam-alt {
+.glow-tint,
+.glow-bloom,
+.glow-sheen {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
   pointer-events: none;
-  transform-origin: bottom center;
   will-change: transform, opacity;
 }
 
-.glow-beam {
-  height: 76%;
+.glow-tint {
+  inset: 0;
 }
 
-.glow-beam-alt {
-  height: 48%;
-  opacity: 0.8;
+/* 玻璃顶沿的一线反光：让卡片有"厚度"，而不是一块纯色板 */
+.glow-layer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.07) 0%,
+    rgba(255, 255, 255, 0.02) 14%,
+    rgba(255, 255, 255, 0) 32%
+  );
 }
 
-@keyframes glow-beam-breath {
+/* 主光斑：圆心故意压在封面那一侧（左中），读起来像"光来自封面" */
+.glow-bloom {
+  left: -10%;
+  top: -12%;
+  width: 78%;
+  height: 100%;
+  /* 径向渐变本身就是羽化过的，不需要 filter: blur（省一次大范围离屏合成） */
+  transform-origin: center;
+}
+
+/* 次光斑：右下角，与主光斑反向呼吸，卡片四个角都有层次 */
+.glow-bloom-alt {
+  left: 32%;
+  top: 18%;
+  width: 92%;
+  height: 112%;
+}
+
+.glow-sheen {
+  left: -24%;
+  top: -12%;
+  width: 148%;
+  height: 124%;
+  /* 极淡的斜向高光：只有扫过的瞬间才看得见，像玻璃上掠过的一层反光 */
+  background: linear-gradient(
+    104deg,
+    rgba(255, 255, 255, 0) 30%,
+    rgba(255, 255, 255, 0.055) 44%,
+    rgba(255, 255, 255, 0.1) 50%,
+    rgba(255, 255, 255, 0.055) 56%,
+    rgba(255, 255, 255, 0) 70%
+  );
+  opacity: 0;
+}
+
+@keyframes glow-tint-breathe {
   0%,
   100% {
-    opacity: 0.82;
-    transform: scaleY(0.97);
+    opacity: 0.74;
   }
   50% {
     opacity: 1;
-    transform: scaleY(1.04);
+  }
+}
+
+@keyframes glow-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: translate3d(7%, 5%, 0) scale(1.14);
+    opacity: 1;
+  }
+}
+
+@keyframes glow-drift-alt {
+  0%,
+  100% {
+    transform: translate3d(0, 4%, 0) scale(1.08);
+    opacity: 0.85;
+  }
+  50% {
+    transform: translate3d(-9%, -6%, 0) scale(0.94);
+    opacity: 0.55;
+  }
+}
+
+@keyframes glow-sheen {
+  0% {
+    transform: translate3d(-36%, 0, 0);
+    opacity: 0;
+  }
+  16% {
+    opacity: 0.9;
+  }
+  44%,
+  100% {
+    transform: translate3d(36%, 0, 0);
+    opacity: 0;
   }
 }
 
@@ -508,21 +588,36 @@ body.island-body {
 }
 
 /*
- * 歌词区（歌手下一行）：两行视口——上行是当前句（亮色 + 行内进度高亮），
- * 下行是下一句的弱化预览。换行时 `.lyric-roll` 整体上移一行，形成上下句滚动换位。
+ * 歌词区（歌手下一行）：只完整显示当前句（亮色 + 行内进度高亮），
+ * 下一句只从视口底沿露出一小截（`--lyric-peek`），像翻页时隐约看见的下一行。
+ * 换行时 `.lyric-roll` 整体上移一行，形成上下句滚动换位。
  * 无歌词时以 `.fallback` 收成单行显示专辑名占位。
  * 行高用变量统一（`card.ts` 读同一行的实际高度来算滚动位移）。
  */
 .lyric {
   --lyric-row-h: 15px;
+  /* 下一句露出的高度：只到能看出「下面还有一句」的程度 */
+  --lyric-peek: 6px;
   position: relative;
   margin-top: 2px;
-  height: calc(var(--lyric-row-h) * 2);
+  height: calc(var(--lyric-row-h) + var(--lyric-peek));
   overflow: hidden;
   transition: height 200ms cubic-bezier(0.2, 0, 0, 1);
-  /* 视口底部轻微淡出：下句预览不会硬切在卡片上 */
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 56%, rgba(0, 0, 0, 0.34) 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 56%, rgba(0, 0, 0, 0.34) 100%);
+  /* 当前句完整可见，露出的那一截向下淡出，不硬切在卡片上 */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 74%,
+    rgba(0, 0, 0, 0.62) 86%,
+    rgba(0, 0, 0, 0.12) 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 74%,
+    rgba(0, 0, 0, 0.62) 86%,
+    rgba(0, 0, 0, 0.12) 100%
+  );
 }
 
 .lyric.fallback {
@@ -556,7 +651,8 @@ body.island-body {
   line-height: var(--lyric-row-h);
   font-family: "Segoe UI Variable Display", "Microsoft YaHei UI", sans-serif;
   font-size: 12.5px;
-  color: #71717a;
+  /* 非当前句只露出一小截，颜色略提一档才看得出"下面还有一句" */
+  color: #7c7c86;
   transition: color 300ms ease;
 }
 
@@ -638,6 +734,8 @@ body.island-body {
   position: relative;
   height: 20px;
   margin: 0 10px;
+  /* 拖动期间交给 pointer 事件自己处理，别让浏览器抢去做滚动 / 手势 */
+  touch-action: none;
 }
 
 .seek-track,
@@ -658,7 +756,9 @@ body.island-body {
 
 .seek-fill {
   width: 0;
-  background: #d8d8de;
+  background: #e6e6ec;
+  /* 已播部分自己带一点柔光：与滑块连成一条会亮的进度 */
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.28);
 }
 
 .seek-thumb {
@@ -672,6 +772,14 @@ body.island-body {
   background: #ffffff;
   opacity: 0;
   transition: opacity 120ms linear;
+  /* 滑块带一圈光晕（内核实、外圈散），拖动时更像一颗发光的小球 */
+  box-shadow:
+    0 0 10px rgba(255, 255, 255, 0.55),
+    0 0 2px rgba(255, 255, 255, 0.9);
+}
+
+.seekbar.hover .seek-fill {
+  box-shadow: 0 0 9px rgba(255, 255, 255, 0.42);
 }
 
 .seekbar.hover .seek-track,

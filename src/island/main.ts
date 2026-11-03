@@ -58,8 +58,15 @@ const mediaCard = new MediaCard(document.getElementById("mediaCard")!, {
   onNext: () => void api.next(),
   onSeek: (fraction) => {
     const duration = media?.DurationMs ?? 0;
-    if (duration <= 0) return;
-    void api.seek(duration * fraction);
+    if (duration <= 0 || !media) return;
+
+    const position = duration * fraction;
+    // 乐观推进本地快照：真实快照要等媒体线程下一次采样才回来，
+    // 这中间若继续按旧位置渲染，进度条与歌词会先弹回旧位置再跳过来。
+    media = { ...media, PositionMs: position, PositionStampMs: Date.now() };
+    mediaCard.setProgress(position, duration);
+    mediaCard.tickLyrics(position);
+    void api.seek(position);
   },
   onUserActed: () => {
     // 用户主动操作后 2 秒内不因"暂停"自动收起（由后端统一判断，这里只上报时间戳并刷新进度）

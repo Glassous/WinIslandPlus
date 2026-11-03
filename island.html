@@ -54,8 +54,9 @@
                   <div class="title" id="titleText">未知曲目</div>
                   <div class="artist" id="artistText">未知艺术家</div>
                   <!--
-                    歌词视口：两行高，上行是当前句（.is-current，内部再叠一层
-                    .lyric-fill 做「已唱到哪」的行内进度高亮），下行是下一句的弱化预览。
+                    歌词视口：一行完整 + 下一句露出一点点。
+                    上行是当前句（.is-current，内部再叠一层 .lyric-fill 做「已唱到哪」
+                    的行内进度高亮），下行只在视口底沿露出顶部一小截。
                     换行时 .lyric-roll 整体上移一行 → 上下句上下滚动换位。
                   -->
                   <div class="lyric" id="lyricText" hidden>
